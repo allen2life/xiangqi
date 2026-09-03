@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <title>XiangqiBlast</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Noto+Sans+SC:wght@400;600;700&family=Noto+Serif+SC:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: #090c12;
+      font-family: "Noto Serif SC", "Noto Sans SC", "Songti SC", "Microsoft YaHei", serif; color: #e8e2d6;
+      -webkit-user-select: none; user-select: none;
+    }
+    html[lang="en"] body {
+      font-family: "Inter", "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    }
+    canvas#pixi-canvas {
+      position: fixed; top: 0; left: 0; z-index: 1;
+      touch-action: none;
+    }
+  </style>
+</head>
+<body>
+  <!-- DOM UI Layer -->
+  <div id="ui-hud" class="ui-panel"></div>
+  <div id="ui-hand" class="ui-panel"></div>
+  <div id="ui-buttons" class="ui-panel"></div>
+  <div id="ui-toast" class="ui-panel hidden"></div>
+  <div id="ui-start-menu" class="ui-panel overlay hidden"></div>
+  <div id="ui-victory" class="ui-panel overlay hidden"></div>
+  <div id="ui-debug-modal" class="ui-panel overlay hidden"></div>
+  <div id="ui-cloud-sync" class="ui-panel overlay hidden"></div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
