@@ -2,13 +2,22 @@ import { defineConfig } from 'vite';
 import { execSync } from 'child_process';
 import path from 'path';
 
+// git 从 cwd 向上定位仓库根：monorepo 子目录与独立仓库都能取到 hash
+function buildHash(): string {
+  try {
+    const opts = { cwd: __dirname };
+    const hash = execSync('git rev-parse --short HEAD', opts).toString().trim();
+    const dirty = execSync('git status --porcelain', opts).toString().trim() ? '-dirty' : '';
+    return hash + dirty;
+  } catch {
+    return 'unknown';
+  }
+}
+
 export default defineConfig({
   define: {
     // 未提交修改时标记 -dirty，避免版本号与已发布版本混淆
-    __BUILD_HASH__: JSON.stringify(
-      execSync('git -C .. rev-parse --short HEAD').toString().trim()
-      + (execSync('git -C .. status --porcelain').toString().trim() ? '-dirty' : ''),
-    ),
+    __BUILD_HASH__: JSON.stringify(buildHash()),
     __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
   },
   base: './',
