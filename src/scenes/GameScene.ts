@@ -3,7 +3,7 @@ import gsap from 'gsap';
 import { CONFIG } from '../config';
 import { screenToLogical, logicalToScreen, setBoardParams } from '../utils/coord';
 import { Camp, GamePhase, GameResult, PieceType } from '../core/types';
-import type { ResolveStep } from '../core/types';
+import type { ResolveStep, Point } from '../core/types';
 import { SkillEffectPlayer } from '../effects/SkillEffectPlayer';
 import { INK_THEME } from '../effects/themes/InkTheme';
 import { GOLD_THEME } from '../effects/themes/GoldTheme';
@@ -20,7 +20,7 @@ import { preloadPieceIcons } from '../renderers/PieceRenderer';
 import { renderNow } from '../utils/renderLoop';
 import { TurnStatsRecorder, installTurnStats } from '../utils/turnStats';
 // Platform state queried from C++ via engineBridge
-import { AudioManager, PIECE_HIT_SOUNDS } from '../audio/AudioManager';
+import { AudioManager, PIECE_HIT_SOUNDS, getPentatonicRate } from '../audio/AudioManager';
 import { t, serverErrorMessage } from '../i18n';
 import { BoardRenderer } from '../renderers/BoardRenderer';
 import { PieceRenderer, getPieceIconTexture } from '../renderers/PieceRenderer';
@@ -39,6 +39,7 @@ import { DailyController } from '../ui/controllers/DailyController';
 import { FtueController } from '../ui/controllers/FtueController';
 import { ReplayController, parseXqbrRecord } from '../ui/controllers/ReplayController';
 import type { XqbrRecord } from '../ui/controllers/ReplayController';
+import { ReplayPlaybackRunner } from '../ui/controllers/ReplayPlaybackRunner';
 
 // 调试开关：URL 带 debug=1 时点击棋子打印其参数（与 versionWatermark 的 ?debug 约定一致）
 const DEBUG_PIECE_CLICK = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
@@ -80,14 +81,14 @@ export class GameScene {
   /** V1-015/V1-016: Replay/challenge seed (undefined = normal deterministic seed) */
   private replaySeed: number | undefined = undefined;
   private replayConfig: string | undefined = undefined;
-  /** V1-015: Replay playback state */
-  private replayRecord: XqbrRecord | null = null;
-  private replayActionIndex = 0;
-  private replayPlaying = false;
-  private replaySpeed = 1;
-  private replayTimer: ReturnType<typeof setTimeout> | null = null;
+  /** V1-015: Replay playback runner */
+  private replayRunner: ReplayPlaybackRunner | null = null;
+  private pendingReplayRecord: XqbrRecord | null = null;
   /** 保存 ReplayController 实例，用于关闭回放时 reshow() 分享面板 */
   private replayCtrl: ReplayController | null = null;
+  /** Mobile touch-up placement state */
+  private isTouchPlacing = false;
+  private activeTouchTarget: Point | null = null;
   private settledLoongSouls = 0;
   private animScore = 0;
   /** 当前回合内已发生的击杀步数，用于连击音高递增 */
@@ -121,9 +122,9 @@ export class GameScene {
     this.replaySeed = seed;
     this.replayConfig = configJson;
     // 清空回放状态：挑战模式不是回放，init() 不应进入 replayPlay 分支
-    this.replayRecord = null;
-    this.replayPlaying = false;
-    this.hideReplayControls();
+    this.replayRunner?.destroy();
+    this.replayRunner = null;
+    this.pendingReplayRecord = null;
     this.campaignMode = !!configJson;
     SaveManager.clearGameState();
     this.ui.hideStartMenu();
@@ -133,10 +134,7 @@ export class GameScene {
 
   /** V1-015: Start replay playback mode — init engine with record's seed and auto-play actions. */
   private beginReplay(record: XqbrRecord): void {
-    this.replayRecord = record;
-    this.replayActionIndex = 0;
-    this.replayPlaying = false;
-    this.replaySpeed = 1;
+    this.pendingReplayRecord = record;
     // 直接进入回放，不显示"进入战斗"动画；同时清空结算页状态，避免引擎状态变更后误用
     this.debugMode = false;
     this.currentLevel = record.levelId;
@@ -155,209 +153,35 @@ export class GameScene {
     void this.init();
   }
 
-  /** V1-015: Execute one replay action from the record.
-   *  复用 GameScene 高层方法，保证落子/resolve/道具等动画与正常游戏一致。 */
-  private replayStep(): void {
-    if (!this.replayRecord || this.replayActionIndex >= this.replayRecord.actions.length) {
-      this.replayPause();
-      this.ui.showToast(t('replay.done'), 3);
-      // 回放结束：触发结算页（复用正常游戏流程）
-      this.checkGameOver();
-      return;
-    }
-    const action = this.replayRecord.actions[this.replayActionIndex];
-    this.replayActionIndex++;
-    switch (action.type) {
-      case 1: // PLACE
-        this.replayPlace(action.code, action.arg0, action.arg1);
-        break;
-      case 2: // UNDO_PLACEMENT
-        this.onUndo();
-        break;
-      case 3: // SKIP
-        this.onSkipTurn();
-        break;
-      case 4: // CONFIRM — 触发完整 resolve 动画链（onConfirm 内部设置 isAnimating）
-        this.onConfirm();
-        break;
-      case 8: // USE_ITEM
-        this.replayUseItem(action.code);
-        break;
-      default: return;
-    }
-    this.updateReplayControls();
-  }
-
   /** V1-015: Replay a PLACE action — find matching hand piece, place on board with drop animation. */
   private replayPlace(wasmCode: number, col: number, row: number): void {
     const tsPiece = wasmToTsPiece(wasmCode as any);
     const handIndex = this.turnManager.hand.findIndex(p => p.pieceType === tsPiece);
     if (handIndex < 0) return;
     this.turnManager.selectHand(handIndex);
-    if (this.turnManager.placeOnBoard(col, row) === 0) {
+    this.doPlacePiece(col, row);
+  }
+
+  /** 统一放置棋子逻辑（含落子动画、技能指示圈展示、粮草告警） */
+  private doPlacePiece(col: number, row: number): boolean {
+    const placeRet = this.turnManager.placeOnBoard(col, row);
+    // 引擎兜底：选牌校验后的残余粮草不足（正常流程由选牌拦截，此处防御）
+    if (placeRet === -7) this.ui.showToast(t('toast.noProvisions'), 1.5);
+    if (placeRet === 0) {
       this.intersectionRenderer.clearSkillPreview();
       this.refreshUI();
-      // 复用 onPointerDown 的落子动画
       const lastPlaced = this.turnManager.placed[this.turnManager.placed.length - 1];
       if (lastPlaced && lastPlaced.position) {
         this.intersectionRenderer.addSkillRange(lastPlaced.id, lastPlaced.skill.getAttackRange(lastPlaced.position!));
         const wrapper = this.pieceRenderer.getContainer(lastPlaced.id);
-        if (wrapper) { wrapper.y -= 60; gsap.to(wrapper, { y: wrapper.y + 60, duration: CONFIG.ANIM.PLACE, ease: 'back.out' }); }
+        if (wrapper) {
+          wrapper.y -= 60;
+          gsap.to(wrapper, { y: wrapper.y + 60, duration: CONFIG.ANIM.PLACE, ease: 'back.out' });
+        }
       }
+      return true;
     }
-  }
-
-  /** V1-015: Replay a USE_ITEM action — map code to EngineItemType and apply via turnManager. */
-  private replayUseItem(code: number): void {
-    // code 对应 EngineItemType 枚举值（1=UNDO, 2=REDRAW, 3=UNSEAL, 4=HAND_SET, 10=PROVISION_WAGON 等）
-    this.turnManager.useItem(code as EngineItemType);
-    this.refreshUI();
-  }
-
-  /** V1-015: Auto-play replay actions at configured speed.
-   *  CONFIRM 后 isAnimating=true，tick 会等待动画完成再继续。
-   *  游戏结束时（onConfirm 触发 checkGameOver）自动暂停回放。 */
-  private replayPlay(): void {
-    if (!this.replayRecord) return;
-    const record = this.replayRecord;
-    this.replayPlaying = true;
-    this.updateReplayControls();
-    const tick = () => {
-      if (!this.replayPlaying || !this.replayRecord) return;
-      // 等待 resolve 动画完成（onConfirm 设置 isAnimating=true）
-      if (this.isAnimating) {
-        this.replayTimer = setTimeout(tick, 200 / this.replaySpeed);
-        return;
-      }
-      // 游戏已结束（onConfirm 的 finishTurn 触发了 checkGameOver），暂停回放
-      if (this.turnManager.gameResult !== GameResult.NONE) {
-        this.replayPause();
-        return;
-      }
-      this.replayStep();
-      if (this.replayPlaying && this.replayActionIndex < record.actions.length) {
-        // CONFIRM 后 resolve 动画已通过 isAnimating 等待完毕，额外给 1000ms 观看结算效果；
-        // PLACE/其它动作给 800ms 落子动画 + 短暂停顿（1× 节奏接近真实战斗）
-        const lastAction = record.actions[this.replayActionIndex - 1];
-        const delay = lastAction?.type === 4 ? 1000 / this.replaySpeed : 800 / this.replaySpeed;
-        this.replayTimer = setTimeout(tick, delay);
-      }
-    };
-    tick();
-  }
-
-  /** V1-015: Pause auto-play. */
-  private replayPause(): void {
-    this.replayPlaying = false;
-    if (this.replayTimer) { clearTimeout(this.replayTimer); this.replayTimer = null; }
-    this.updateReplayControls();
-  }
-
-  /** V1-015: Show replay playback control — trigger button at gear-btn position + popup panel. */
-  private showReplayControls(): void {
-    // 清理残留
-    document.getElementById('replay-controls')?.remove();
-    document.getElementById('rc-trigger')?.remove();
-
-    // 回放时隐藏设置按钮，在其位置插入回放触发按钮
-    const gearBtn = document.getElementById('gear-btn');
-    if (gearBtn) {
-      gearBtn.style.display = 'none';
-      const trigger = document.createElement('button');
-      trigger.id = 'rc-trigger';
-      trigger.className = 'rc-trigger';
-      trigger.type = 'button';
-      gearBtn.parentNode!.insertBefore(trigger, gearBtn);
-      trigger.addEventListener('click', (e) => {
-        e.stopPropagation();
-        document.getElementById('replay-controls')?.classList.toggle('hidden');
-        this.updateReplayControls();
-      });
-    }
-
-    // 弹出面板（默认收起）
-    const panel = document.createElement('div');
-    panel.id = 'replay-controls';
-    panel.className = 'rc-panel hidden';
-    panel.innerHTML = `
-      <button class="rc-btn rc-play-pause" id="rc-play-pause">${t('replay.play')}</button>
-      <div class="rc-speed-group">
-        <button class="rc-btn rc-speed" data-speed="0.5">0.5×</button>
-        <button class="rc-btn rc-speed" data-speed="1">1×</button>
-        <button class="rc-btn rc-speed" data-speed="2">2×</button>
-      </div>
-      <button class="rc-btn rc-close" id="rc-close">✕</button>`;
-    document.body.appendChild(panel);
-
-    // 点击功能按钮后收起面板
-    panel.querySelector('#rc-play-pause')!.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (this.replayPlaying) this.replayPause(); else this.replayPlay();
-      panel.classList.add('hidden');
-    });
-    panel.querySelectorAll('.rc-speed').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.replaySpeed = parseFloat((btn as HTMLElement).dataset.speed!);
-        this.updateReplayControls();
-        panel.classList.add('hidden');
-      });
-    });
-    panel.querySelector('#rc-close')!.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.hideReplayControls();
-      this.cleanupScene();
-      const onQuit = () => { this.start(); };
-      if (this.replayCtrl?.reshow(onQuit)) {
-        // 分享面板已重新显示，等用户关闭后再回主菜单
-      } else {
-        this.start();
-      }
-    });
-
-    // 点击面板外收起
-    const onOutsideClick = (e: MouseEvent) => {
-      const target = e.target as Element | null;
-      if (target && !panel.contains(target) && target.id !== 'rc-trigger') {
-        panel.classList.add('hidden');
-      }
-    };
-    document.addEventListener('click', onOutsideClick);
-    (panel as any)._outsideHandler = onOutsideClick;
-
-    this.updateReplayControls();
-  }
-
-  /** V1-015: Update trigger button text + panel button states. */
-  private updateReplayControls(): void {
-    const trigger = document.getElementById('rc-trigger');
-    if (!trigger) return;
-    // 触发按钮显示当前状态：▶/⏸ + 速度
-    trigger.textContent = `${this.replayPlaying ? '⏸' : '▶'}${this.replaySpeed}×`;
-    const panel = document.getElementById('replay-controls');
-    if (panel) {
-      const playPauseBtn = panel.querySelector('#rc-play-pause') as HTMLButtonElement;
-      if (playPauseBtn) playPauseBtn.textContent = this.replayPlaying ? t('replay.pause') : t('replay.play');
-      panel.querySelectorAll('.rc-speed').forEach(btn => {
-        const speed = parseFloat((btn as HTMLElement).dataset.speed!);
-        (btn as HTMLElement).classList.toggle('active', Math.abs(speed - this.replaySpeed) < 0.01);
-      });
-    }
-  }
-
-  private hideReplayControls(): void {
-    this.replayPause();
-    this.replayRecord = null;
-    const panel = document.getElementById('replay-controls');
-    if (panel) {
-      const handler = (panel as any)._outsideHandler as ((e: MouseEvent) => void) | undefined;
-      if (handler) document.removeEventListener('click', handler);
-      panel.remove();
-    }
-    document.getElementById('rc-trigger')?.remove();
-    // 恢复设置按钮
-    const gear = document.getElementById('gear-btn');
-    if (gear) gear.style.display = '';
+    return false;
   }
 
   start(): void {
@@ -516,7 +340,9 @@ export class GameScene {
       // Reset replay/challenge state for normal game start
       this.replaySeed = undefined;
       this.replayConfig = undefined;
-      this.replayRecord = null;
+      this.replayRunner?.destroy();
+      this.replayRunner = null;
+      this.pendingReplayRecord = null;
       if (!(hasCheckpoint && startLevel === fullSave!.level)) {
         SaveManager.clearGameState();
       }
@@ -547,7 +373,7 @@ export class GameScene {
 
     // 回放模式下禁用所有交互回调（手牌选择/预览点击/确认/重开），
     // 防止用户在回放过程中操作手牌、落子
-    const isReplay = !!this.replayRecord;
+    const isReplay = !!this.pendingReplayRecord || !!this.replayRunner?.isReplay;
     this.ui.onHandSelect = isReplay ? null : (i) => this.onHandSelect(i);
     this.ui.onPreviewClick = isReplay ? null : (i) => {
       const p = this.turnManager.placed[i];
@@ -776,9 +602,36 @@ export class GameScene {
     this.turnStats.onSceneInit(!isReplay, this.currentLevel);
 
     // V1-015: If in replay mode, show playback controls and auto-start playback
-    if (this.replayRecord) {
-      this.showReplayControls();
-      this.replayPlay();
+    if (this.pendingReplayRecord) {
+      const record = this.pendingReplayRecord;
+      this.pendingReplayRecord = null;
+      this.replayRunner?.destroy();
+      this.replayRunner = new ReplayPlaybackRunner({
+        onPlace: (wasmCode, col, row) => this.replayPlace(wasmCode, col, row),
+        onUndo: () => this.onUndo(),
+        onSkip: () => this.onSkipTurn(),
+        onConfirm: () => this.onConfirm(),
+        onUseItem: (code) => {
+          this.turnManager.useItem(code as EngineItemType);
+          this.refreshUI();
+        },
+        onComplete: () => {
+          this.checkGameOver();
+        },
+        onClose: () => {
+          this.cleanupScene();
+          const onQuit = () => { this.start(); };
+          if (this.replayCtrl?.reshow(onQuit)) {
+            // 分享面板已重新显示，等用户关闭后再回主菜单
+          } else {
+            this.start();
+          }
+        },
+        isAnimating: () => this.isAnimating,
+        isGameOver: () => this.turnManager.gameResult !== GameResult.NONE,
+        showToast: (msg, dur) => this.ui.showToast(msg, dur ?? 2),
+      });
+      this.replayRunner.start(record);
     }
 
     // Synchronous re-measure now that ui-hand and quick bar are populated.
@@ -815,6 +668,8 @@ export class GameScene {
     this.app.stage.removeAllListeners();
     this.app.stage.on('pointerdown', (e) => this.onPointerDown(e));
     this.app.stage.on('pointermove', (e) => this.onPointerMove(e));
+    this.app.stage.on('pointerup', (e) => this.onPointerUp(e));
+    this.app.stage.on('pointerupoutside', (e) => this.onPointerUp(e));
     if (this.boundOnResize) window.removeEventListener('resize', this.boundOnResize);
     this.boundOnResize = () => {
       if (this._resizeTimer) clearTimeout(this._resizeTimer);
@@ -1135,7 +990,7 @@ export class GameScene {
 
   private saveCheckpoint(): void {
     // 回放模式不写入存档（避免覆盖用户真实进度）
-    if (this.replayRecord) return;
+    if (this.replayRunner?.isReplay || this.pendingReplayRecord) return;
     if (this.turnManager.gameResult === GameResult.NONE) {
       SaveManager.saveGameState(this.turnManager.exportState());
     }
@@ -1204,24 +1059,40 @@ export class GameScene {
       }
     }
     if (this.turnManager.phase === GamePhase.PLACE_PIECE) {
-      const placeRet = this.turnManager.placeOnBoard(point.col, point.row);
-      // 引擎兜底：选牌校验后的残余粮草不足（正常流程由选牌拦截，此处防御）
-      if (placeRet === -7) this.ui.showToast(t('toast.noProvisions'), 1.5);
-      if (placeRet === 0) {
-        this.intersectionRenderer.clearSkillPreview();
-        this.refreshUI();
-        const lastPlaced = this.turnManager.placed[this.turnManager.placed.length - 1];
-        if (lastPlaced && lastPlaced.position) {
-          this.intersectionRenderer.addSkillRange(lastPlaced.id, lastPlaced.skill.getAttackRange(lastPlaced.position!));
-          const wrapper = this.pieceRenderer.getContainer(lastPlaced.id);
-          if (wrapper) { wrapper.y -= 60; gsap.to(wrapper, { y: wrapper.y + 60, duration: CONFIG.ANIM.PLACE, ease: 'back.out' }); }
-        }
+      if (event.pointerType === 'touch') {
+        this.isTouchPlacing = true;
+        this.activeTouchTarget = point;
+        const validPoints = this.turnManager.getValidPlacements();
+        const isValid = validPoints.some(vp => vp.col === point.col && vp.row === point.row);
+        this.intersectionRenderer.showReticle(point.col, point.row, event.global.x, event.global.y, isValid);
+        renderNow();
+      } else {
+        this.doPlacePiece(point.col, point.row);
       }
     }
   }
 
   private onPointerMove(event: any): void {
     if (this.isAnimating) return;
+    if (this.isTouchPlacing) {
+      if (event.global.y >= Layout.boardBottom) {
+        this.activeTouchTarget = null;
+        this.intersectionRenderer.clearReticle();
+        renderNow();
+        return;
+      }
+      const point = screenToLogical(event.global.x, event.global.y);
+      this.activeTouchTarget = point;
+      if (point) {
+        const validPoints = this.turnManager.getValidPlacements();
+        const isValid = validPoints.some(vp => vp.col === point.col && vp.row === point.row);
+        this.intersectionRenderer.showReticle(point.col, point.row, event.global.x, event.global.y, isValid);
+      } else {
+        this.intersectionRenderer.clearReticle();
+      }
+      renderNow();
+      return;
+    }
     // Reject hover below board area
     if (event.global.y >= Layout.boardBottom) { this.intersectionRenderer.clearHover(); renderNow(); return; }
     const point = screenToLogical(event.global.x, event.global.y);
@@ -1229,6 +1100,20 @@ export class GameScene {
     else this.intersectionRenderer.clearHover();
     // hover 指示是纯命令式 Graphics 更新，需手动补帧
     renderNow();
+  }
+
+  private onPointerUp(event: any): void {
+    if (this.isAnimating) return;
+    if (!this.isTouchPlacing) return;
+    this.isTouchPlacing = false;
+    this.intersectionRenderer.clearReticle();
+    renderNow();
+
+    if (this.activeTouchTarget && event.global.y < Layout.boardBottom) {
+      const target = this.activeTouchTarget;
+      this.activeTouchTarget = null;
+      this.doPlacePiece(target.col, target.row);
+    }
   }
 
   private onHandSelect(index: number): void {
@@ -1516,9 +1401,9 @@ export class GameScene {
     const hasMoreKills = steps.slice(idx + 1).some(s => s.targets.some(t => t.eid));
     const enemyAliveAfter = this.turnManager.enemyUnits.filter(u => u.alive && !u.isStatue).length;
     const isFinalKill = thisStepKills && !hasMoreKills && (killedGeneral || enemyAliveAfter === 0);
-    // 连击音高递增：当前步为第 comboStep 次击杀（捕获速率后递增供后续步使用）
+    // 连击五音阶（宫商角徵羽）递增：当前步为第 comboStep 次击杀
     const hitSound = PIECE_HIT_SOUNDS[pieceType];
-    const comboRate = 1 + Math.min(this.comboStep, 10) * 0.03;
+    const comboRate = getPentatonicRate(this.comboStep);
     if (thisStepKills) this.comboStep++;
     // 命中音/称号/触觉/BGM 压低 均在首个命中瞬间（climax）触发，与屏震同步
     this.effectPlayer.onStepClimax = () => {
@@ -2083,6 +1968,7 @@ export class GameScene {
 
   private playLoongDescent(step: ResolveStep, onComplete: () => void): void {
     const pos = logicalToScreen(step.origin.col, step.origin.row);
+    AudioManager.getInstance().play('loong-roar');
     const tl = gsap.timeline({ onComplete });
 
     // Full-screen gold flash
@@ -2156,7 +2042,7 @@ export class GameScene {
   private checkGameOver(): void {
     if (this.turnManager.gameResult === GameResult.NONE) return;
     const win = this.turnManager.gameResult === GameResult.WIN;
-    const isReplay = !!this.replayRecord;
+    const isReplay = !!this.pendingReplayRecord || !!this.replayRunner?.isReplay;
     // 回放/debug 模式跳过所有存档与奖励副作用，仅显示结算页
     const skipRewards = win && (this.debugMode || isReplay);
     if (win && !skipRewards) { AudioManager.getInstance().play('victory'); SaveManager.save(this.currentLevel + 1, this.turnManager.score); SaveManager.saveMaxLevel(this.currentLevel); }
@@ -2246,9 +2132,9 @@ export class GameScene {
       // 回放模式：onNext=重播, onRestart=挑战这局, onMenu=回主页
       const onQuit = () => { this.cleanupScene(); this.start(); };
       if (isReplay) {
-        const replayRecord = this.replayRecord;
+        const replayRecord = this.replayRunner?.currentRecord ?? this.pendingReplayRecord;
         const onReplayAgain = () => {
-          this.hideReplayControls();
+          this.replayRunner?.destroy();
           if (replayRecord) this.beginReplay(replayRecord);
           else { this.cleanupScene(); this.start(); }
         };
@@ -2337,7 +2223,9 @@ export class GameScene {
 
   private cleanupScene(): void {
     // V1-015: Clean up replay state
-    this.hideReplayControls();
+    this.replayRunner?.destroy();
+    this.replayRunner = null;
+    this.pendingReplayRecord = null;
     // Collect any unsettled loong souls into platform inventory before
     // destroying the scene. Without this, souls collected during the game
     // but never "settled" (via backpack open or run publish) are lost.

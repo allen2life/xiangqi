@@ -210,6 +210,13 @@ export class DailyController {
     return true;
   }
 
+  /** Check if user has pending sign-in or claimable tasks */
+  hasPendingNotification(): boolean {
+    const s = readState();
+    if (!s.signedInToday) return true;
+    return s.tasks.some(task => !task.claimed && task.progress >= task.target);
+  }
+
   private showSignInPanel(): void {
     const s = readState();
     const day = s.signInDay % 7;

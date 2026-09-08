@@ -4,7 +4,8 @@ import { PieceType } from '../core/types';
 
 export type SoundName = 'place' | 'eliminate' | 'cannonFire' | 'cannonExplosion' | 'victory' | 'bgm'
   | 'hit-light' | 'hit-heavy' | 'hit-slash' | 'hit-blunt' | 'hit-whoosh' | 'hit-gong'
-  | 'storm-spawn';
+  | 'storm-spawn'
+  | 'loong-roar' | 'dragon-breath' | 'iron-cavalry' | 'mammoth-crush' | 'iron-tank' | 'engineer-bomb';
 
 const SOUND_DEFS: [SoundName, string, number, boolean][] = [
   ['place', `${import.meta.env.BASE_URL}audio/place.mp3`, 0.6, false],
@@ -20,6 +21,12 @@ const SOUND_DEFS: [SoundName, string, number, boolean][] = [
   ['hit-whoosh', `${import.meta.env.BASE_URL}audio/hit-whoosh.mp3`, 0.5, false],
   ['hit-gong', `${import.meta.env.BASE_URL}audio/hit-gong-0.mp3`, 0.6, false],
   ['storm-spawn', `${import.meta.env.BASE_URL}audio/storm-explode.mp3`, 0.8, false],
+  ['loong-roar', `${import.meta.env.BASE_URL}audio/loong-roar.wav`, 0.7, false],
+  ['dragon-breath', `${import.meta.env.BASE_URL}audio/dragon-breath.wav`, 0.65, false],
+  ['iron-cavalry', `${import.meta.env.BASE_URL}audio/iron-cavalry.wav`, 0.65, false],
+  ['mammoth-crush', `${import.meta.env.BASE_URL}audio/mammoth-crush.wav`, 0.75, false],
+  ['iron-tank', `${import.meta.env.BASE_URL}audio/iron-tank.wav`, 0.7, false],
+  ['engineer-bomb', `${import.meta.env.BASE_URL}audio/engineer-bomb.wav`, 0.7, false],
 ];
 
 export const PIECE_HIT_SOUNDS: Record<PieceType, SoundName> = {
@@ -30,17 +37,26 @@ export const PIECE_HIT_SOUNDS: Record<PieceType, SoundName> = {
   [PieceType.ELEPHANT]: 'hit-blunt',
   [PieceType.ADVISOR]: 'hit-whoosh',
   [PieceType.GENERAL]: 'hit-gong',
-  [PieceType.LOONG_FLAME]: 'hit-whoosh',
-  [PieceType.LOONG_PIECE]: 'hit-whoosh',
-  // 召唤令增强棋子：复用基础棋子音效
-  [PieceType.HORSE_IRON]: 'hit-slash',
-  [PieceType.ELEPHANT_MENMA]: 'hit-blunt',
-  [PieceType.CHARIOT_TANK]: 'hit-heavy',
-  [PieceType.PAWN_ENGINEER]: 'hit-light',
+  [PieceType.LOONG_FLAME]: 'dragon-breath',
+  [PieceType.LOONG_PIECE]: 'loong-roar',
+  // 召唤令增强棋子：专属定制音效
+  [PieceType.HORSE_IRON]: 'iron-cavalry',
+  [PieceType.ELEPHANT_MENMA]: 'mammoth-crush',
+  [PieceType.CHARIOT_TANK]: 'iron-tank',
+  [PieceType.PAWN_ENGINEER]: 'engineer-bomb',
   // 障碍/地形：无技能命中音（不可被技能目标）——占位静音用
   [PieceType.CITY]: 'hit-blunt',
   [PieceType.STATUE]: 'hit-heavy',
 };
+
+/** 中国传统五音阶（宫商角徵羽）及其高音阶频率倍率 */
+export const PENTATONIC_RATES = [1.0, 1.125, 1.25, 1.5, 1.667, 2.0, 2.25, 2.5] as const;
+
+export function getPentatonicRate(step: number): number {
+  if (step <= 0) return 1.0;
+  const idx = Math.min(step, PENTATONIC_RATES.length - 1);
+  return PENTATONIC_RATES[idx];
+}
 
 export class AudioManager {
   private static instance: AudioManager | null = null;
@@ -92,7 +108,7 @@ export class AudioManager {
     this.Howl = Howl;
     this.Howler = Howler;
     try {
-      // bgm 与 SFX 一并在启动阶段解码加载（不再懒加载）。
+      // bgm 采用 html5 流式播放，减少首屏 Web Audio 整体解码阻塞；SFX 采用 Web Audio 保证低延迟
       await Promise.all(SOUND_DEFS.map(([name, file, defaultVol, loop]) => new Promise<void>((resolve, reject) => {
         const isBgm = name === 'bgm';
         const prefVol = isBgm ? this.bgmVolume : this.sfxVolume;
@@ -101,6 +117,8 @@ export class AudioManager {
           src: [file],
           volume: vol,
           loop,
+          html5: isBgm,
+          preload: true,
           onload: () => resolve(),
           onloaderror: (_soundId: number | null, error: unknown) => {
             reject(new Error(`Failed to load ${name}: ${String(error)}`));
@@ -171,26 +189,39 @@ export class AudioManager {
     } catch { return null; }
   }
 
-  /** R4: 合成 UI 点击音（短促 triangle 下行），音量跟随 sfxVolume。 */
+  /** 合成温润清脆的棋子轻叩音（玉石触感 + 盘面微共鸣），音量跟随 sfxVolume。 */
   playClick(): void {
     const vol = this.synthSfxVolume;
     if (vol <= 0) return;
     const ctx = this.getCtx();
     if (!ctx) return;
-    // 调度到 currentTime + 0.02：Howler.ctx 在首交互前为 suspended，currentTime 冻结；
-    // 若把事件挂在 currentTime，resume 完成时该时刻已“过去”→ 无声。延后 20ms 给 resume 留窗。
     const start = ctx.currentTime + 0.02;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(720, start);
-    osc.frequency.exponentialRampToValueAtTime(420, start + 0.06);
-    gain.gain.setValueAtTime(0.0001, start);
-    gain.gain.exponentialRampToValueAtTime(0.5 * vol, start + 0.004);
-    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.11);
-    osc.connect(gain).connect(ctx.destination);
-    osc.start(start);
-    osc.stop(start + 0.13);
+
+    // 1. 高频清脆触碰声（模拟玉石/硬木棋子接触瞬间）
+    const clickOsc = ctx.createOscillator();
+    const clickGain = ctx.createGain();
+    clickOsc.type = 'sine';
+    clickOsc.frequency.setValueAtTime(1480, start);
+    clickOsc.frequency.exponentialRampToValueAtTime(560, start + 0.035);
+    clickGain.gain.setValueAtTime(0.0001, start);
+    clickGain.gain.exponentialRampToValueAtTime(0.45 * vol, start + 0.002);
+    clickGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.045);
+    clickOsc.connect(clickGain).connect(ctx.destination);
+    clickOsc.start(start);
+    clickOsc.stop(start + 0.05);
+
+    // 2. 低频木质盘面共鸣微弱底音（棋盘箱体微鸣）
+    const thudOsc = ctx.createOscillator();
+    const thudGain = ctx.createGain();
+    thudOsc.type = 'triangle';
+    thudOsc.frequency.setValueAtTime(220, start);
+    thudOsc.frequency.exponentialRampToValueAtTime(90, start + 0.06);
+    thudGain.gain.setValueAtTime(0.0001, start);
+    thudGain.gain.exponentialRampToValueAtTime(0.25 * vol, start + 0.004);
+    thudGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.07);
+    thudOsc.connect(thudGain).connect(ctx.destination);
+    thudOsc.start(start);
+    thudOsc.stop(start + 0.08);
   }
 
   /** R4: 合成失败音（sawtooth 下行 420→110Hz），音量跟随 sfxVolume。 */

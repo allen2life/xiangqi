@@ -8,6 +8,7 @@ import { getReplay, shareReplay } from '../../cloud/api';
 import { SaveManager } from '../../core/SaveManager';
 import { engineBridge } from '../../wasm/EngineBridge';
 import { showToast } from '../utils/domHelpers';
+import { showBattleShareCard } from '../../utils/shareCard';
 
 // ── XQBR record parser ──
 // Header layout (offset/size): magic(4) version(2) headerSize(2) mode(1) result(1)
@@ -178,11 +179,22 @@ export class ReplayController {
         <div class="replay-share-link" id="replay-link-text">${shareUrl}</div>
         <button class="replay-copy-btn" id="replay-copy">${t('replay.copy')}</button>
       </div>
+      <button class="replay-card-btn" id="replay-card-btn">🎴 ${t('replay.genCard')}</button>
       ${canWatch ? `<button class="replay-watch-btn" id="replay-watch">${t('replay.watchBtn')}</button>` : ''}
       ${onChallenge ? `<button class="replay-challenge-btn" id="replay-challenge">${t('replay.challenge')}</button>` : ''}
       <button class="replay-close-btn" id="replay-close">${t('replay.close')}</button>`;
 
     this.bindClose(overlay);
+    overlay.querySelector('#replay-card-btn')?.addEventListener('click', () => {
+      void showBattleShareCard({
+        level: data.level,
+        score: data.score,
+        stars: data.stars,
+        nickname: data.nickname,
+        replayCode: data.code,
+        shareUrl,
+      });
+    });
     overlay.querySelector('#replay-copy')!.addEventListener('click', async () => {
       const ok = await copyToClipboard(shareUrl);
       showToast(ok ? t('replay.copied') : t('replay.copyFail'), 1.5);

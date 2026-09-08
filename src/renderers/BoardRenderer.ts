@@ -1,4 +1,4 @@
-import { Container, Graphics, Sprite, Text } from 'pixi.js';
+import { Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
 import { CONFIG } from '../config';
 import { logicalToScreen } from '../utils/coord';
 import { createGradientTexture } from '../utils/gradient';
@@ -14,6 +14,9 @@ export class BoardRenderer {
   private mottoText: Text | null = null;
   private lastCols = 0;
   private lastRows = 0;
+  private cachedBw = 0;
+  private cachedBh = 0;
+  private cachedWoodTex: Texture | null = null;
 
   constructor() {
     this.container.addChild(this.boardBgGfx);
@@ -43,12 +46,20 @@ export class BoardRenderer {
     this.boardBgGfx.roundRect(tl.x + 5, tl.y + 5, bw, bh, 8)
       .fill({ color: 0x000000, alpha: 0.4 });
 
-    // Wood-like gradient board surface
-    const woodTex = createGradientTexture(bw, bh, [
-      { offset: 0, color: '#c9a66b' },
-      { offset: 0.5, color: '#b8956a' },
-      { offset: 1, color: '#a07d52' },
-    ], 145);
+    // Wood-like gradient board surface with texture reuse/caching
+    if (!this.cachedWoodTex || this.cachedBw !== bw || this.cachedBh !== bh) {
+      if (this.cachedWoodTex) {
+        this.cachedWoodTex.destroy(true);
+      }
+      this.cachedBw = bw;
+      this.cachedBh = bh;
+      this.cachedWoodTex = createGradientTexture(bw, bh, [
+        { offset: 0, color: '#c9a66b' },
+        { offset: 0.5, color: '#b8956a' },
+        { offset: 1, color: '#a07d52' },
+      ], 145);
+    }
+    const woodTex = this.cachedWoodTex;
     if (this.boardSprite) {
       this.boardSprite.texture = woodTex;
       this.boardSprite.x = tl.x;

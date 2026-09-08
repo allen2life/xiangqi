@@ -522,69 +522,237 @@ html[lang="en"] body {
 #ui-toast:empty { display: none; }
 
 /* ═══════════════════════════════════════════════════════════════════
-   Start Menu — .start-menu-overlay
+   Start Menu — Chinese Classical Lobby (.lobby-card)
   ═══════════════════════════════════════════════════════════════════ */
 #ui-start-menu {
-  background: rgba(0,0,0,0.85);
-  backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+  background: rgba(4, 6, 12, 0.88);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
 }
 
 .start-menu-card {
-  background: linear-gradient(135deg, #1a1a2e, #16213e);
-  border-radius: 20px; padding: 32px 24px; max-width: 340px; width: 90%;
-  text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-  border: 1px solid rgba(255,255,255,0.1);
+  background:
+    radial-gradient(ellipse at 50% 10%, rgba(201, 160, 80, 0.12) 0%, transparent 65%),
+    linear-gradient(160deg, rgba(28, 22, 18, 0.96) 0%, rgba(14, 16, 22, 0.98) 100%);
+  border-radius: 20px; padding: 18px 20px 14px; max-width: 380px; width: 92%;
+  text-align: center; box-shadow: 0 24px 64px rgba(0,0,0,0.7), inset 0 1px 1px rgba(255, 215, 0, 0.2);
+  border: 1.5px solid rgba(201, 160, 80, 0.35);
+  display: flex; flex-direction: column; gap: 12px;
+}
+
+/* ── Top Profile & Currencies Bar ── */
+.lobby-profile-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 12px; background: rgba(201, 160, 80, 0.05);
+  border: 1px solid rgba(201, 160, 80, 0.18); border-radius: 14px;
+}
+
+.lobby-profile-user {
+  display: flex; align-items: center; gap: 8px;
+  cursor: pointer; min-width: 0; transition: transform 0.15s ease;
+}
+.lobby-profile-user:hover { transform: scale(1.02); }
+
+.lobby-seal-avatar-wrap {
+  position: relative; width: 38px; height: 38px; flex-shrink: 0;
+}
+.lobby-seal-avatar {
+  width: 100%; height: 100%; border-radius: 50%; object-fit: cover;
+  border: 1.5px solid var(--lc-gold-bright); box-shadow: 0 0 8px rgba(201, 160, 80, 0.3);
+}
+.lobby-seal-ring {
+  position: absolute; inset: -3px; border-radius: 50%;
+  border: 1px dashed rgba(201, 160, 80, 0.45); pointer-events: none;
+  animation: sealRingGlow 8s linear infinite;
+}
+@keyframes sealRingGlow {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.lobby-user-meta {
+  display: flex; flex-direction: column; align-items: flex-start;
+  min-width: 0; line-height: 1.25;
+}
+.lobby-nickname {
+  font-size: 13px; font-weight: 700; color: var(--lc-gold-bright);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 85px;
+}
+.lobby-seal-tag {
+  font-size: 11px; color: rgba(255, 255, 255, 0.6); white-space: nowrap;
+}
+
+.lobby-currencies {
+  display: flex; align-items: center; gap: 5px; flex-shrink: 0;
+}
+.currency-pill {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 4px 8px; background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px;
+  font-size: 12px; font-weight: 700; line-height: 1; transition: all 0.2s ease;
+}
+.currency-pill[role="button"]:hover {
+  border-color: var(--lc-gold-bright); background: rgba(201, 160, 80, 0.15); cursor: pointer;
+}
+.currency-pill.gold .currency-val { color: #ffdf7e; }
+.currency-pill.soul .currency-val { color: #c4b5fd; }
+.currency-pill.stars .currency-val { color: #fde047; }
+
+/* ── Hero Center Zone ── */
+.lobby-hero-zone {
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  padding: 4px 0;
+}
+
+.lobby-brand-row {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
 }
 .start-menu-logo {
-  display: block; margin: 0 auto 8px; border-radius: 10px;
-  object-fit: contain;
+  display: block; margin: 0; width: 50px; height: 50px; border-radius: 12px;
+  border: 1px solid rgba(201, 160, 80, 0.35); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  object-fit: contain; cursor: pointer; transition: transform 0.2s ease;
 }
+.start-menu-logo:hover { transform: scale(1.05); }
 
+.lobby-brand-text {
+  display: flex; flex-direction: column; align-items: flex-start; text-align: left;
+}
 .start-title {
-  font-size: 36px; font-weight: 700; margin-bottom: 8px;
-  background: linear-gradient(135deg, gold, #ff6b6b);
+  font-size: 28px; font-weight: 900; margin: 0;
+  font-family: 'Noto Serif SC', 'Songti SC', 'STKaiti', serif;
+  background: linear-gradient(180deg, #fff7d6 0%, #f9d77e 40%, #c9a050 100%);
   -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-  background-clip: text;
+  background-clip: text; letter-spacing: 2px; cursor: pointer;
+  text-shadow: 0 2px 12px rgba(201, 160, 80, 0.3);
 }
-.start-title-row {
-  display: flex; align-items: center; justify-content: center; gap: 12px;
-  margin-bottom: 8px;
+.start-subtitle {
+  font-size: 12px; letter-spacing: 2px; color: rgba(255, 255, 255, 0.55); margin: 2px 0 0;
 }
-.start-title-row .start-title { margin-bottom: 0; }
-.start-subtitle { font-size: 16px; color: var(--text-secondary); margin-bottom: 24px; }
-.start-version { margin-top: 8px; font-size: 11px; color: rgba(255,255,255,0.25); text-align: center; }
 
-.start-btn {
-  display: block; width: 100%; border: none; border-radius: 12px;
-  padding: 16px 24px; font-size: 18px; font-weight: 700; color: #fff;
-  cursor: pointer; margin-bottom: 12px;
-  transition: transform 0.2s, box-shadow 0.2s;
+/* ── Hero Battle CTA Buttons ── */
+.lobby-hero-actions {
+  width: 100%; display: flex; flex-direction: column; gap: 8px;
 }
-.start-btn:hover { transform: translateY(-2px); }
-.start-btn:active { transform: translateY(0); }
-.start-btn.new-game {
-  background: var(--lc-copper);
-  box-shadow: 0 4px 15px rgba(52,152,219,0.4);
+
+.lobby-hero-btn.start-btn {
+  position: relative; overflow: hidden; width: 100%; margin-bottom: 0;
+  padding: 13px 20px; border-radius: 14px;
+  border: 1.5px solid rgba(255, 215, 0, 0.55);
+  background: linear-gradient(135deg, #c0392b 0%, #d35400 45%, #962d15 100%);
+  color: #fff; cursor: pointer;
+  box-shadow: 0 6px 20px rgba(192, 57, 43, 0.45), inset 0 1px 1px rgba(255, 255, 255, 0.35);
+  transition: transform 0.15s ease, box-shadow 0.2s ease;
+  animation: heroBreathing 3s infinite ease-in-out;
 }
-.start-btn.new-game:hover { box-shadow: 0 6px 20px rgba(52,152,219,0.5); }
-.start-btn.continue {
-  background: var(--lc-vermilion-dark);
-  box-shadow: 0 4px 15px rgba(46,204,113,0.4);
-  line-height: 1.4;
+.lobby-hero-btn.start-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(211, 84, 0, 0.6), inset 0 1px 2px rgba(255, 255, 255, 0.5);
 }
-.continue-score {
-  font-size: 12px; font-weight: 400; opacity: 0.8;
+.lobby-hero-btn.start-btn:active { transform: translateY(0); }
+
+@keyframes heroBreathing {
+  0%, 100% { box-shadow: 0 6px 20px rgba(192, 57, 43, 0.45), 0 0 12px rgba(243, 156, 18, 0.2); }
+  50% { box-shadow: 0 8px 26px rgba(211, 84, 0, 0.65), 0 0 20px rgba(243, 156, 18, 0.45); }
 }
+
+.hero-btn-content {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+}
+.hero-btn-icon {
+  font-size: 24px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));
+}
+.hero-btn-text-group {
+  display: flex; align-items: center; gap: 10px;
+}
+.hero-btn-title {
+  font-size: 19px; font-weight: 900; letter-spacing: 2px;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+  font-family: 'Noto Serif SC', 'Songti SC', 'STKaiti', serif;
+}
+.hero-btn-badge {
+  font-size: 11px; font-weight: 700; padding: 2px 8px;
+  background: rgba(0, 0, 0, 0.35); border: 1px solid rgba(255, 215, 0, 0.4);
+  border-radius: 10px; color: #fef08a; letter-spacing: 1px;
+}
+
+.lobby-sub-actions {
+  display: flex; gap: 8px; width: 100%;
+}
+.lobby-sub-btn {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 9px 12px; border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(201, 160, 80, 0.22);
+  color: var(--lc-text); font-size: 13px; font-weight: 700; cursor: pointer;
+  transition: all 0.2s ease; margin-bottom: 0;
+}
+.lobby-sub-btn.start-btn { margin-bottom: 0; }
+.lobby-sub-btn:hover {
+  background: rgba(201, 160, 80, 0.12); border-color: rgba(201, 160, 80, 0.45);
+  transform: translateY(-1px);
+}
+.lobby-sub-btn:active { transform: translateY(0); }
+.sub-btn-icon { font-size: 15px; }
+
+/* ── 2x2 Utility Dock ── */
+.lobby-dock {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; width: 100%;
+}
+.dock-tile.start-btn {
+  position: relative; display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 12px; width: auto; margin-bottom: 0;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0%, rgba(0, 0, 0, 0.25) 100%);
+  border: 1px solid rgba(201, 160, 80, 0.2); cursor: pointer; text-align: left;
+  transition: all 0.2s ease;
+}
+.dock-tile.start-btn:hover {
+  background: linear-gradient(135deg, rgba(201, 160, 80, 0.12) 0%, rgba(0, 0, 0, 0.35) 100%);
+  border-color: rgba(201, 160, 80, 0.5); transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+.dock-tile.start-btn:active { transform: translateY(0); }
+
+.dock-tile-icon { font-size: 22px; flex-shrink: 0; }
+.dock-tile-info { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.dock-tile-title {
+  font-size: 13px; font-weight: 700; color: var(--lc-gold-bright);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dock-tile-sub {
+  font-size: 11px; color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.dock-badge {
+  position: absolute; top: 6px; right: 6px; width: 8px; height: 8px;
+  border-radius: 50%; background: #e74c3c; box-shadow: 0 0 6px #e74c3c;
+}
+.dock-badge.pulse { animation: dotPulse 1.6s infinite; }
+@keyframes dotPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.4); opacity: 0.7; }
+}
+
+/* ── Lobby Footer ── */
+.lobby-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-top: 8px; border-top: 1px solid rgba(201, 160, 80, 0.12); margin-top: 2px;
+}
+.lobby-rules-btn {
+  display: inline-flex; align-items: center; gap: 4px; background: none;
+  border: none; color: var(--lc-gold-muted); font-size: 12px; cursor: pointer;
+  padding: 2px 4px; border-radius: 6px; transition: color 0.15s ease;
+}
+.lobby-rules-btn:hover { color: var(--lc-gold-bright); }
+.start-version { margin: 0; font-size: 11px; color: rgba(255, 255, 255, 0.3); }
 
 .debug-toggle {
-  margin-top: 12px; padding: 10px; background: rgba(255,165,0,0.1);
+  margin-top: 4px; padding: 8px 10px; background: rgba(255,165,0,0.1);
   border-radius: 8px; border: 1px dashed rgba(255,165,0,0.3);
 }
 .debug-toggle label {
   display: flex; align-items: center; gap: 8px; cursor: pointer;
-  font-size: 16px; color: rgba(255,255,255,0.8);
+  font-size: 14px; color: rgba(255,255,255,0.8);
 }
-.debug-toggle input[type="checkbox"] { width: 18px; height: 18px; accent-color: #ffa500; }
+.debug-toggle input[type="checkbox"] { width: 16px; height: 16px; accent-color: #ffa500; }
 
 .help-icon-btn {
   width: 28px; height: 28px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.3);
@@ -1344,6 +1512,16 @@ html[lang="en"] body {
 }
 .replay-watch-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(243,156,18,0.5); }
 .replay-watch-btn:active { transform: translateY(0); }
+.replay-card-btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; padding: 10px 18px; border: none; border-radius: 14px;
+  font-size: 15px; font-weight: 700; color: #1a1608; cursor: pointer;
+  background: linear-gradient(135deg, #ffd700 0%, #d4af37 100%);
+  box-shadow: 0 4px 12px rgba(255, 215, 0, 0.4);
+  transition: transform 0.2s, box-shadow 0.2s; margin-bottom: 8px;
+}
+.replay-card-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(255, 215, 0, 0.6); }
+.replay-card-btn:active { transform: translateY(0); }
 .replay-challenge-btn {
   display: block; width: 100%; padding: 10px 18px; border: none; border-radius: 14px;
   font-size: 15px; font-weight: 700; color: #fff; cursor: pointer;
@@ -2871,9 +3049,26 @@ button:disabled { opacity: .42; cursor: not-allowed; transform: none !important;
     width: min(680px, 94vw);
     max-height: calc(100dvh - var(--safe-top) - var(--safe-bottom));
   }
-  .start-menu-card { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px 12px; }
-  .start-title-row, .start-subtitle, .debug-toggle { grid-column: 1 / -1; }
-  .start-btn { margin: 0; padding-block: 9px; }
+  .start-menu-card {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0,1fr));
+    gap: 8px 14px;
+    align-items: center;
+  }
+  .start-menu-card .lobby-profile-bar,
+  .start-menu-card .debug-toggle,
+  .start-menu-card .lobby-footer {
+    grid-column: 1 / -1;
+  }
+  .start-menu-card .lobby-hero-zone {
+    grid-column: 1;
+    padding: 0;
+  }
+  .start-menu-card .lobby-dock {
+    grid-column: 2;
+  }
+  .start-title-row, .start-subtitle { grid-column: 1 / -1; }
+  .start-btn { margin: 0; }
   .victory-card { padding-block: 18px; gap: 8px; }
   .settlement-card { max-height: 38vh; }
   .cloud-sync-card { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }

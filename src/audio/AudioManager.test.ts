@@ -17,7 +17,8 @@ vi.mock('howler', () => ({
   Howler: { ctx: null },
 }));
 
-import { AudioManager } from './AudioManager';
+import { AudioManager, PIECE_HIT_SOUNDS } from './AudioManager';
+import { PieceType } from '../core/types';
 
 afterEach(() => {
   AudioManager.getInstance().destroy();
@@ -69,5 +70,20 @@ describe('AudioManager.initialize', () => {
     await vi.waitFor(() => expect(howlOptions.length).toBeGreaterThan(0));
     howlOptions.forEach(({ onload }) => onload());
     await expect(retry).resolves.toBeUndefined();
+  });
+});
+
+describe('PIECE_HIT_SOUNDS', () => {
+  it('maps every hero piece, loong, and basic piece to appropriate hit sounds', () => {
+    expect(PIECE_HIT_SOUNDS[PieceType.LOONG_PIECE]).toBe('loong-roar');
+    expect(PIECE_HIT_SOUNDS[PieceType.LOONG_FLAME]).toBe('dragon-breath');
+    expect(PIECE_HIT_SOUNDS[PieceType.HORSE_IRON]).toBe('iron-cavalry');
+    expect(PIECE_HIT_SOUNDS[PieceType.ELEPHANT_MENMA]).toBe('mammoth-crush');
+    expect(PIECE_HIT_SOUNDS[PieceType.CHARIOT_TANK]).toBe('iron-tank');
+    expect(PIECE_HIT_SOUNDS[PieceType.PAWN_ENGINEER]).toBe('engineer-bomb');
+    expect(PIECE_HIT_SOUNDS[PieceType.PAWN]).toBe('hit-light');
+    expect(PIECE_HIT_SOUNDS[PieceType.CHARIOT]).toBe('hit-heavy');
+    expect(PIECE_HIT_SOUNDS[PieceType.CANNON]).toBe('cannonExplosion');
+    expect(PIECE_HIT_SOUNDS[PieceType.GENERAL]).toBe('hit-gong');
   });
 });

@@ -7,6 +7,7 @@ import { t, getLang, setLang } from '../../i18n';
 import { AudioManager } from '../../audio/AudioManager';
 import { showConfirmDialog } from '../utils/domHelpers';
 import { getResolution, setResolution, RES_OPTIONS } from '../../utils/renderLoop';
+import { getBattleSpeed, setBattleSpeed, type BattleSpeed } from '../../utils/battleSpeed';
 import type { DomUIContext } from '../DomUIContext';
 
 const VOL_TABS = [t('settings.volOff'), t('settings.volLow'), t('settings.volMid'), t('settings.volHigh')];
@@ -37,6 +38,7 @@ export class SettingsController {
     const sfxIdx = this.volToIdx(sfxV);
     const curRes = getResolution();
     const resIdx = RES_OPTIONS.indexOf(curRes);
+    const curSpeed = getBattleSpeed();
     // 回放模式下隐藏"重新开始"和"排行榜"按钮
     const isReplay = !!document.getElementById('replay-controls');
 
@@ -86,6 +88,19 @@ export class SettingsController {
               <button class="vol-tab${resIdx === 0 ? ' active' : ''}" data-res="2">${t('settings.qualityHigh')}</button>
               <button class="vol-tab${resIdx === 1 ? ' active' : ''}" data-res="1.5">${t('settings.qualityMid')}</button>
               <button class="vol-tab${resIdx === 2 ? ' active' : ''}" data-res="1">${t('settings.qualityLow')}</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-divider"></div>
+
+        <div class="settings-section">
+          <div class="vol-row">
+            <span class="vol-label">⚡ ${t('settings.speed')}</span>
+            <div class="vol-tabs" id="speed-tabs">
+              <button class="vol-tab${curSpeed === 1 ? ' active' : ''}" data-speed="1">${t('settings.speed1x')}</button>
+              <button class="vol-tab${curSpeed === 1.5 ? ' active' : ''}" data-speed="1.5">${t('settings.speed15x')}</button>
+              <button class="vol-tab${curSpeed === 2 ? ' active' : ''}" data-speed="2">${t('settings.speed2x')}</button>
             </div>
           </div>
         </div>
@@ -169,6 +184,16 @@ export class SettingsController {
       const res = parseFloat(btn.dataset.res || '2');
       setResolution(res);
       this.updateTabs(overlay, 'quality-tabs', RES_OPTIONS.indexOf(res));
+    });
+
+    overlay.querySelector('#speed-tabs')?.addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest('[data-speed]') as HTMLElement;
+      if (!btn) return;
+      const speed = parseFloat(btn.dataset.speed || '1') as BattleSpeed;
+      setBattleSpeed(speed);
+      overlay.querySelectorAll('#speed-tabs .vol-tab').forEach((el) => {
+        el.classList.toggle('active', (el as HTMLElement).dataset.speed === String(speed));
+      });
     });
   }
 

@@ -19,9 +19,14 @@ export async function onRequest(context: { request: Request; env: Env }): Promis
   headers.delete('host');
   headers.delete('content-length');
   headers.delete('transfer-encoding');
-  // Cloudflare 保留头不可转发
+  // 提取真实的客户端 IP 并安全转发给后端
+  const clientIP = request.headers.get('cf-connecting-ip') || request.headers.get('x-real-ip');
   for (const name of ['cf-connecting-ip', 'cf-ray', 'cf-visitor', 'x-forwarded-for', 'x-forwarded-proto', 'x-real-ip']) {
     headers.delete(name);
+  }
+  if (clientIP) {
+    headers.set('x-real-ip', clientIP);
+    headers.set('x-forwarded-for', clientIP);
   }
   const method = request.method;
   const body = method === 'GET' || method === 'HEAD' ? undefined : request.body;

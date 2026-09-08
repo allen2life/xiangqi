@@ -71,6 +71,168 @@ export function getPieceIconTexture(pieceType: PieceType, isPlayer: boolean): Te
   return getIcon(pieceType, isPlayer);
 }
 
+const obstacleTextureCache = new Map<string, Texture>();
+
+/** Procedural vector canvas texture for City (Fortress Gate) and Statue (Ancient Stone Beast) */
+function getObstacleTexture(type: 'city' | 'statue', active: boolean, size: number): Texture {
+  const cacheKey = `${type}_${active ? '1' : '0'}_${size}`;
+  const cached = obstacleTextureCache.get(cacheKey);
+  if (cached) return cached;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return Texture.WHITE;
+
+  const s = size / 64;
+  ctx.save();
+  ctx.translate(size / 2, size / 2);
+
+  if (type === 'city') {
+    // ── 关隘城池 (Classical Chinese Fortress Gate) ──
+    const wallColor = active ? '#8c603a' : '#4a4440';
+    const gateColor = '#1a1412';
+    const roofColor = active ? '#b83a2a' : '#5c3a30';
+    const goldColor = active ? '#d4af37' : '#7a6a4a';
+
+    if (active) {
+      ctx.shadowColor = 'rgba(243, 156, 18, 0.6)';
+      ctx.shadowBlur = 10 * s;
+    }
+
+    // 1. Base foundation / 城台 (trapezoid)
+    ctx.beginPath();
+    ctx.moveTo(-22 * s, 22 * s);
+    ctx.lineTo(22 * s, 22 * s);
+    ctx.lineTo(19 * s, 4 * s);
+    ctx.lineTo(-19 * s, 4 * s);
+    ctx.closePath();
+    ctx.fillStyle = wallColor;
+    ctx.fill();
+    ctx.lineWidth = 1.5 * s;
+    ctx.strokeStyle = goldColor;
+    ctx.stroke();
+
+    // 2. Arched gate / 拱券门洞
+    ctx.beginPath();
+    ctx.arc(0, 15 * s, 7 * s, Math.PI, 0, false);
+    ctx.lineTo(7 * s, 22 * s);
+    ctx.lineTo(-7 * s, 22 * s);
+    ctx.closePath();
+    ctx.fillStyle = gateColor;
+    ctx.fill();
+
+    // 3. Crenellated battlements / 城垛
+    ctx.fillStyle = wallColor;
+    const cw = 7 * s, ch = 5 * s;
+    [-18 * s, -3.5 * s, 11 * s].forEach((x) => {
+      ctx.fillRect(x, -1 * s, cw, ch);
+      ctx.strokeRect(x, -1 * s, cw, ch);
+    });
+
+    // 4. Watchtower / 城楼与飞檐
+    ctx.beginPath();
+    ctx.moveTo(-12 * s, -1 * s);
+    ctx.lineTo(12 * s, -1 * s);
+    ctx.lineTo(10 * s, -11 * s);
+    ctx.lineTo(-10 * s, -11 * s);
+    ctx.closePath();
+    ctx.fillStyle = active ? '#2c1e18' : '#201d1b';
+    ctx.fill();
+
+    // Roof eaves / 飞檐
+    ctx.beginPath();
+    ctx.moveTo(-18 * s, -10 * s);
+    ctx.quadraticCurveTo(0, -14 * s, 18 * s, -10 * s);
+    ctx.lineTo(12 * s, -18 * s);
+    ctx.lineTo(0, -21 * s);
+    ctx.lineTo(-12 * s, -18 * s);
+    ctx.closePath();
+    ctx.fillStyle = roofColor;
+    ctx.fill();
+    ctx.strokeStyle = goldColor;
+    ctx.stroke();
+
+    // Beacon flame / 烽火灵光 (if active)
+    if (active) {
+      ctx.beginPath();
+      ctx.arc(0, -23 * s, 3.5 * s, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffcc00';
+      ctx.shadowColor = '#ff4400';
+      ctx.shadowBlur = 8 * s;
+      ctx.fill();
+    }
+  } else {
+    // ── 镇煞神兽石像 (Archaic Stone Beast Stele) ──
+    const stoneColor = active ? '#34495e' : '#2c3e50';
+    const runeColor = active ? '#00e5ff' : '#566573';
+    const goldColor = active ? '#a2d9ce' : '#515a5a';
+
+    if (active) {
+      ctx.shadowColor = 'rgba(0, 229, 255, 0.5)';
+      ctx.shadowBlur = 10 * s;
+    }
+
+    // 1. Carved plinth / 须弥座 (double step)
+    ctx.fillStyle = active ? '#212f3d' : '#1c2833';
+    ctx.fillRect(-22 * s, 16 * s, 44 * s, 6 * s);
+    ctx.strokeStyle = goldColor;
+    ctx.lineWidth = 1.2 * s;
+    ctx.strokeRect(-22 * s, 16 * s, 44 * s, 6 * s);
+    ctx.fillRect(-18 * s, 10 * s, 36 * s, 6 * s);
+    ctx.strokeRect(-18 * s, 10 * s, 36 * s, 6 * s);
+
+    // 2. Main Stone Monolith / 石兽主体 (Arched top stele with beast ears)
+    ctx.beginPath();
+    ctx.moveTo(-15 * s, 10 * s);
+    ctx.lineTo(-15 * s, -10 * s);
+    ctx.lineTo(-18 * s, -18 * s); // left ear/horn
+    ctx.lineTo(-9 * s, -15 * s);
+    ctx.quadraticCurveTo(0, -22 * s, 9 * s, -15 * s); // crown arch
+    ctx.lineTo(18 * s, -18 * s); // right ear/horn
+    ctx.lineTo(15 * s, -10 * s);
+    ctx.lineTo(15 * s, 10 * s);
+    ctx.closePath();
+    ctx.fillStyle = stoneColor;
+    ctx.fill();
+    ctx.stroke();
+
+    // 3. Ancient Runic Eye & Totem / 铭文与神目
+    ctx.beginPath();
+    ctx.arc(0, -5 * s, 6 * s, 0, Math.PI * 2);
+    ctx.fillStyle = active ? '#0b1e28' : '#151d23';
+    ctx.fill();
+    ctx.strokeStyle = runeColor;
+    ctx.stroke();
+
+    if (active) {
+      ctx.beginPath();
+      ctx.arc(0, -5 * s, 2.8 * s, 0, Math.PI * 2);
+      ctx.fillStyle = '#00e5ff';
+      ctx.shadowColor = '#00ffff';
+      ctx.shadowBlur = 8 * s;
+      ctx.fill();
+    }
+
+    // Carved tribal marks
+    ctx.beginPath();
+    ctx.moveTo(-8 * s, 4 * s);
+    ctx.lineTo(8 * s, 4 * s);
+    ctx.moveTo(-6 * s, 7 * s);
+    ctx.lineTo(6 * s, 7 * s);
+    ctx.strokeStyle = runeColor;
+    ctx.lineWidth = 1.5 * s;
+    ctx.stroke();
+  }
+
+  ctx.restore();
+
+  const tex = Texture.from(canvas);
+  obstacleTextureCache.set(cacheKey, tex);
+  return tex;
+}
+
 export class PieceRenderer {
   readonly container = new Container();
   private pieceMap = new Map<string, Container>();
@@ -99,42 +261,16 @@ export class PieceRenderer {
     const pos = logicalToScreen(unit.position.col, unit.position.row);
 
     if (isCity || isStatue) {
-      // ── Obstacle (city / statue): emoji icon, no circle bg ──
-      const emoji = isCity ? '🏰' : '🗿';
-      const emojiSize = Math.round(Layout.pieceFontSize * 1.33);
-
-      if (unit.active) {
-        // Warm glow behind obstacle (amber for city, brown for statue)
-        const glow = new Text({
-          text: emoji,
-          style: { fontSize: emojiSize, fontFamily: 'Arial' },
-        });
-        glow.anchor.set(0.5);
-        glow.tint = isCity ? 0x8b6914 : 0x5c3a1e;
-        glow.alpha = 0.2;
-        glow.scale.set(1.2);
-        wrapper.addChildAt(glow, 0);
-
-        if (isStatue) {
-          const brownGlow = new Text({
-            text: emoji,
-            style: { fontSize: emojiSize, fontFamily: 'Arial' },
-          });
-          brownGlow.anchor.set(0.5);
-          brownGlow.tint = 0x8b4513;
-          brownGlow.alpha = 0.3;
-          brownGlow.scale.set(1.15);
-          wrapper.addChildAt(brownGlow, 0);
-        }
-      }
-
-      const text = new Text({
-        text: emoji,
-        style: { fontSize: emojiSize, fontFamily: 'Arial' },
-      });
-      text.anchor.set(0.5);
-      text.alpha = unit.active ? 1 : 0.35;
-      wrapper.addChild(text);
+      // ── Obstacle (city / statue): custom Chinese style vector texture ──
+      const type = isCity ? 'city' : 'statue';
+      const texSize = Math.max(64, Math.round(r * 2.8));
+      const tex = getObstacleTexture(type, !!unit.active, texSize);
+      const sprite = new Sprite(tex);
+      sprite.anchor.set(0.5);
+      sprite.width = r * 2.4;
+      sprite.height = r * 2.4;
+      sprite.alpha = unit.active ? 1 : 0.4;
+      wrapper.addChild(sprite);
     } else {
       // ── Regular piece: circle bg + icon ──
       const gfx = new Graphics();

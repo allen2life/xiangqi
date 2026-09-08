@@ -14,6 +14,7 @@ import {
   STAGGER, CHAR_SPIN, SHATTER, TRAVEL, RING, EASE,
   KINGS_MEETING, GENERAL_WEIGHT, PALACE,
 } from './EffectConstants';
+import { getBattleSpeed, onBattleSpeedChange } from '../utils/battleSpeed';
 
 // 可热调慢放系数：window.__fxSlow = 2 即可整体慢放，便于逐帧调试。
 function getSlow(): number {
@@ -78,6 +79,9 @@ export class SkillEffectPlayer {
         ? window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
         : false;
     } catch { this.reduceMotion = false; }
+    onBattleSpeedChange((speed) => {
+      if (this.activeTl) this.activeTl.timeScale(speed);
+    });
   }
 
   setTheme(theme: EffectTheme): void { this.theme = validateTheme(theme); }
@@ -97,6 +101,7 @@ export class SkillEffectPlayer {
     if (steps.length === 0) { onComplete(); return; }
 
     const tl = gsap.timeline({ onComplete: () => { this.activeTl = null; onComplete(); } });
+    tl.timeScale(getBattleSpeed());
     this.activeTl = tl;
     this.skipped = false;
 

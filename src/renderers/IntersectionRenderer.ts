@@ -35,6 +35,7 @@ export class IntersectionRenderer {
   private validGfx = new Graphics();
   private skillGfx = new Graphics();
   private hoverGfx = new Graphics();
+  private reticleGfx = new Graphics();
   private eliminatingLayer = new Container();
 
   private pulseTween: gsap.core.Tween | null = null;
@@ -54,6 +55,7 @@ export class IntersectionRenderer {
       this.skillGfx,
       this.hoverGfx,
       this.eliminatingLayer,
+      this.reticleGfx,
     );
   }
 
@@ -77,6 +79,68 @@ export class IntersectionRenderer {
 
   clearHover(): void {
     this.hoverGfx.clear();
+  }
+
+  // ── Mobile Touch Reticle & Preview ────────────────────────────
+
+  /** Show targeting reticle at (col, row) + floating indicator above touch point (touchX, touchY). */
+  showReticle(col: number, row: number, touchX: number, touchY: number, isValid: boolean): void {
+    const pos = logicalToScreen(col, row);
+    this.reticleGfx.clear();
+
+    const color = isValid ? 0xffd700 : 0xef5350;
+    const r = Layout.pieceRadius || 24;
+
+    // 1. Target corner brackets around candidate intersection
+    const bracketSize = Math.max(8, r * 0.4);
+    const offset = r + 4;
+
+    // Top-Left
+    this.reticleGfx.moveTo(pos.x - offset, pos.y - offset + bracketSize)
+      .lineTo(pos.x - offset, pos.y - offset)
+      .lineTo(pos.x - offset + bracketSize, pos.y - offset);
+    // Top-Right
+    this.reticleGfx.moveTo(pos.x + offset - bracketSize, pos.y - offset)
+      .lineTo(pos.x + offset, pos.y - offset)
+      .lineTo(pos.x + offset, pos.y - offset + bracketSize);
+    // Bottom-Left
+    this.reticleGfx.moveTo(pos.x - offset, pos.y + offset - bracketSize)
+      .lineTo(pos.x - offset, pos.y + offset)
+      .lineTo(pos.x - offset + bracketSize, pos.y + offset);
+    // Bottom-Right
+    this.reticleGfx.moveTo(pos.x + offset - bracketSize, pos.y + offset)
+      .lineTo(pos.x + offset, pos.y + offset)
+      .lineTo(pos.x + offset, pos.y + offset - bracketSize);
+
+    this.reticleGfx.stroke({ width: 2.5, color, alpha: 0.9 });
+
+    // Inner highlight halo
+    this.reticleGfx.circle(pos.x, pos.y, r)
+      .fill({ color, alpha: isValid ? 0.2 : 0.15 });
+    this.reticleGfx.circle(pos.x, pos.y, 4)
+      .fill({ color, alpha: 0.85 });
+
+    // 2. Floating magnifying indicator ~48px above finger (touchX, touchY)
+    const bubbleY = touchY - 48;
+    const bubbleR = 20;
+
+    // Subtle guide line from floating bubble to target intersection
+    this.reticleGfx.moveTo(touchX, bubbleY + bubbleR)
+      .lineTo(pos.x, pos.y - offset);
+    this.reticleGfx.stroke({ width: 1.5, color, alpha: 0.5 });
+
+    // Bubble outer ring + fill
+    this.reticleGfx.circle(touchX, bubbleY, bubbleR)
+      .fill({ color: 0x1a2130, alpha: 0.92 })
+      .stroke({ width: 2, color, alpha: 0.9 });
+
+    // Bubble center indicator
+    this.reticleGfx.circle(touchX, bubbleY, 5)
+      .fill({ color, alpha: 0.9 });
+  }
+
+  clearReticle(): void {
+    this.reticleGfx.clear();
   }
 
   // ── Valid placements (gold dots matching hover style) ─────────
@@ -241,6 +305,7 @@ export class IntersectionRenderer {
     this.forbiddenGfx.clear();
     this.validGfx.clear();
     this.hoverGfx.clear();
+    this.clearReticle();
     this.validGfx.alpha = 1;
 
     this.clearEliminatingLayer();
@@ -270,6 +335,7 @@ export class IntersectionRenderer {
     this.validGfx.destroy();
     this.skillGfx.destroy();
     this.hoverGfx.destroy();
+    this.reticleGfx.destroy();
     this.clearEliminatingLayer();
     this.eliminatingLayer.destroy();
     this.skillRangeMap.clear();

@@ -151,4 +151,43 @@ describe('DailyController win streak', () => {
 
     expect(engineBridge.grantGold).toHaveBeenCalledWith(100);
   });
+
+  describe('hasPendingNotification', () => {
+    it('returns true if not signed in today', () => {
+      const ctrl = new DailyController();
+      expect(ctrl.hasPendingNotification()).toBe(true);
+    });
+
+    it('returns false if signed in and no tasks completed', () => {
+      const today = new Date().toISOString().slice(0, 10);
+      globalThis.localStorage.setItem(DAILY_KEY, JSON.stringify({
+        date: today,
+        signInDay: 1,
+        signedInToday: true,
+        tasks: [
+          { id: 'play', target: 3, progress: 0, claimed: false, reward: {} },
+        ],
+        winStreak: 0,
+        claimedStreakMilestones: [],
+      }));
+      const ctrl = new DailyController();
+      expect(ctrl.hasPendingNotification()).toBe(false);
+    });
+
+    it('returns true if signed in but has claimable task', () => {
+      const today = new Date().toISOString().slice(0, 10);
+      globalThis.localStorage.setItem(DAILY_KEY, JSON.stringify({
+        date: today,
+        signInDay: 1,
+        signedInToday: true,
+        tasks: [
+          { id: 'play', target: 3, progress: 3, claimed: false, reward: {} },
+        ],
+        winStreak: 0,
+        claimedStreakMilestones: [],
+      }));
+      const ctrl = new DailyController();
+      expect(ctrl.hasPendingNotification()).toBe(true);
+    });
+  });
 });
