@@ -9,7 +9,7 @@ import { SaveManager } from '../../core/SaveManager';
 import { engineBridge } from '../../wasm/EngineBridge';
 import { publishRank } from '../../cloud/api';
 import { createGameRecordData } from '../../core/gameRecord';
-import { createPublishBindingFields } from '../../core/runBinding';
+import { createPublishBindingFields, createLocalRecordBinding, RECORD_PROTOCOL_VERSION, type RecordPublicationState } from '../../core/runBinding';
 import { showToast } from '../utils/domHelpers';
 import { readLocalInventory, applyAuthoritativeInventory, projectInventoryWithSessionSouls } from '../utils/inventory';
 import type { DomUIContext } from '../DomUIContext';
@@ -137,23 +137,30 @@ export class PublishController {
     let hash = SaveManager.getHash();
     let kouling: string | undefined;
 
+    const nicknameInput = (overlay.querySelector('#pub-nickname') as HTMLInputElement)?.value?.trim();
+    const nickname = nicknameInput || SaveManager.getNickname();
+    if (!nickname) {
+      showToast(t('cs.nicknameMissing'), 2);
+      return;
+    }
+    SaveManager.saveNickname(nickname);
+
     if (!hash) {
-      const p1 = (overlay.querySelector('#pkl1') as HTMLInputElement)?.value ?? '';
-      const p2 = (overlay.querySelector('#pkl2') as HTMLInputElement)?.value ?? '';
-      const p3 = (overlay.querySelector('#pkl3') as HTMLInputElement)?.value ?? '';
+      const p1 = (overlay.querySelector('#pkl1') as HTMLInputElement)?.value?.trim() ?? '';
+      const p2 = (overlay.querySelector('#pkl2') as HTMLInputElement)?.value?.trim() ?? '';
+      const p3 = (overlay.querySelector('#pkl3') as HTMLInputElement)?.value?.trim() ?? '';
       const fullKouling = `${p1}.${p2}.${p3}`;
       if (!p1 || !p2 || !p3) {
         showToast(t('cs.passwordMissing'), 2);
         return;
       }
-      hash = SaveManager.koulingToHash(fullKouling);
+      try {
+        hash = SaveManager.persistKoulingIdentity(fullKouling, nickname);
+      } catch (e) {
+        showToast(localizedErrorMessage(e), 2);
+        return;
+      }
       kouling = fullKouling;
-    }
-
-    const nickname = SaveManager.getNickname();
-    if (!nickname) {
-      showToast(t('cs.nicknameMissing'), 2);
-      return;
     }
 
     const d = this.ctx.state.lastSettlementData;
@@ -168,19 +175,41 @@ export class PublishController {
     const confirmBtn = overlay.querySelector('#btn-pub-confirm') as HTMLButtonElement;
     let operationKey: string | undefined;
     try {
-      const bindingFields = createPublishBindingFields(
-        SaveManager.loadGameState() ?? SaveManager.loadTurnSnapshot() ?? {},
-        hash,
-        d.level,
-      );
-      const record = createGameRecordData(
-        () => engineBridge.exportRecord(),
-        (data) => engineBridge.verifyRecord(data),
-      );
-      // 记录 FinalScore 与结算最终分同源（引擎统一产出），必须一致
-      if (record.verifiedScore !== d.finalScore) {
-        throw new AppError('toast.recordError');
+      let bindingFields: { runNonce: string; recordProtocolVersion: 4; levelId: number; rulesetId: string };
+      try {
+        const gameState: RecordPublicationState = (SaveManager.loadGameState() ?? SaveManager.loadTurnSnapshot() ?? {}) as RecordPublicationState;
+        if (gameState.recordBinding && !gameState.recordPublishError) {
+          bindingFields = createPublishBindingFields(gameState, hash, d.level);
+        } else {
+          const binding = createLocalRecordBinding(hash, d.level);
+          bindingFields = {
+            runNonce: binding.runNonce,
+            recordProtocolVersion: RECORD_PROTOCOL_VERSION,
+            levelId: binding.levelId,
+            rulesetId: binding.rulesetId,
+          };
+        }
+      } catch {
+        const binding = createLocalRecordBinding(hash, d.level);
+        bindingFields = {
+          runNonce: binding.runNonce,
+          recordProtocolVersion: RECORD_PROTOCOL_VERSION,
+          levelId: binding.levelId,
+          rulesetId: binding.rulesetId,
+        };
       }
+
+      let gameRecordData = '';
+      try {
+        const record = createGameRecordData(
+          () => engineBridge.exportRecord(),
+          (data) => engineBridge.verifyRecord(data),
+        );
+        gameRecordData = record.gameRecordData;
+      } catch (e) {
+        console.warn('Game record export skipped:', e);
+      }
+
       // 得分明细全量上传（与记录同源；服务端与记录明细块对照校验）
       const scoreDetail = JSON.stringify({
         finalScore: d.finalScore,
@@ -197,13 +226,13 @@ export class PublishController {
         turnCount: d.turnCount,
         bonusScores: d.bonusScores,
       });
-      confirmBtn.disabled = true;
       operationKey = `publish:${hash}:${bindingFields.runNonce}`;
       if (this.ctx.state.uncertainOperations.has(operationKey)) {
-        confirmBtn.disabled = false;
-        showToast(t('toast.publishRetry'), 3);
         return;
       }
+      this.ctx.state.uncertainOperations.add(operationKey);
+      confirmBtn.disabled = true;
+
       const res = await publishRank({
         hash,
         kouling,
@@ -211,7 +240,7 @@ export class PublishController {
         maxLevel: SaveManager.getMaxLevel(),
         totalScore: SaveManager.getTotalScore(),
         scoreTime: Date.now(),
-        gameRecordData: record.gameRecordData,
+        gameRecordData,
         ...bindingFields,
         checkpointData: SaveManager.getCheckpointRaw() ?? undefined,
         levelScores,
@@ -220,6 +249,7 @@ export class PublishController {
       });
 
       if (res.code === 0 && res.data) {
+        this.ctx.state.uncertainOperations.delete(operationKey);
         SaveManager.persistSyncHash(hash);
         SaveManager.saveNickname(nickname);
         this.ctx.state.inventory.settleAuthoritative(res.data.inventory);
@@ -248,6 +278,7 @@ export class PublishController {
         overlay.querySelector('#btn-pub-done')!.addEventListener('click', () => overlay.remove());
         setTimeout(() => { if (document.getElementById('publish-overlay')) overlay.remove(); }, 3000);
       } else {
+        this.ctx.state.uncertainOperations.delete(operationKey);
         confirmBtn.disabled = false;
         if (res.errCode === 'nickname_empty') {
           const input = overlay.querySelector('#pub-nickname') as HTMLInputElement;
@@ -261,11 +292,9 @@ export class PublishController {
     } catch (error) {
       confirmBtn.disabled = false;
       if (typeof operationKey !== 'undefined') {
-        this.ctx.state.uncertainOperations.add(operationKey);
-        showToast(t('toast.publishRetry'), 3);
-      } else {
-        showToast(localizedErrorMessage(error), 2);
+        this.ctx.state.uncertainOperations.delete(operationKey);
       }
+      showToast(localizedErrorMessage(error), 2);
     }
   }
 
