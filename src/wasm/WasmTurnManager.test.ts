@@ -93,6 +93,19 @@ describe('WasmTurnManager.forceDefeat', () => {
     expect(engine.forceDefeat).toHaveBeenCalledOnce();
     expect(manager.syncState).toHaveBeenCalledOnce();
   });
+
+  it('supports stalemate reason err.no_valid_moves', () => {
+    engine.forceDefeat.mockClear();
+    const manager = makeManager();
+    manager.recordBinding = {} as WasmTurnManager['recordBinding'];
+    manager.syncState = vi.fn();
+
+    manager.forceDefeat('err.no_valid_moves');
+
+    expect(manager.recordBinding).toBeUndefined();
+    expect(manager.recordPublishError).toBe('err.no_valid_moves');
+    expect(engine.forceDefeat).toHaveBeenCalledOnce();
+  });
 });
 
 describe('WasmTurnManager.provisions', () => {
