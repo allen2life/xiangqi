@@ -85,11 +85,12 @@ export class PublishController {
           <div class="publish-field">
             <label class="publish-label">${t('publish.passwordLabel')}</label>
             <div class="kouling-row">
-              <input class="kouling-input" id="pkl1" maxlength="8" placeholder="${t('publish.passwordPlaceholder')}" autocomplete="off">
+              <input type="password" class="kouling-input" id="pkl1" maxlength="8" placeholder="${t('publish.passwordPlaceholder')}" autocomplete="off">
               <span class="kouling-dot">.</span>
-              <input class="kouling-input" id="pkl2" maxlength="8" placeholder="${t('publish.passwordPlaceholder')}" autocomplete="off">
+              <input type="password" class="kouling-input" id="pkl2" maxlength="8" placeholder="${t('publish.passwordPlaceholder')}" autocomplete="off">
               <span class="kouling-dot">.</span>
-              <input class="kouling-input" id="pkl3" maxlength="8" placeholder="${t('publish.passwordPlaceholder')}" autocomplete="off">
+              <input type="password" class="kouling-input" id="pkl3" maxlength="8" placeholder="${t('publish.passwordPlaceholder')}" autocomplete="off">
+              <button type="button" class="kouling-eye-btn" id="pkl-eye" title="切换显示/隐藏">👁️</button>
             </div>
           </div>
           <div class="publish-warning">${t('publish.warning')}</div>
@@ -112,11 +113,30 @@ export class PublishController {
       overlay.querySelector('#pub-nickname')?.addEventListener('input', (e) => {
         SaveManager.saveNickname((e.target as HTMLInputElement).value);
       });
-      ['pkl1', 'pkl2', 'pkl3'].forEach((id, i, ids) => {
+      const ids = ['pkl1', 'pkl2', 'pkl3'];
+      ids.forEach((id, i) => {
         const input = overlay.querySelector(`#${id}`) as HTMLInputElement;
         if (!input) return;
         input.addEventListener('input', () => {
-          if (input.value.length >= 8 && i < ids.length - 1) {
+          const val = input.value;
+          if (val.includes('.') || val.includes('。') || val.includes('·')) {
+            const cleaned = val.replace(/[。·]/g, '.');
+            const parts = cleaned.split('.');
+            input.value = [...(parts[0] || '')].slice(0, 8).join('');
+            if (parts.length > 1 && i < ids.length - 1) {
+              const nextInp = overlay.querySelector(`#${ids[i + 1]}`) as HTMLInputElement;
+              if (nextInp) {
+                nextInp.value = [...(parts[1] || '')].slice(0, 8).join('');
+                if (parts.length > 2 && i < ids.length - 2) {
+                  const thirdInp = overlay.querySelector(`#${ids[i + 2]}`) as HTMLInputElement;
+                  if (thirdInp) thirdInp.value = [...(parts[2] || '')].slice(0, 8).join('');
+                }
+                nextInp.focus();
+              }
+            }
+            return;
+          }
+          if ([...input.value].length >= 8 && i < ids.length - 1) {
             const next = overlay.querySelector(`#${ids[i + 1]}`) as HTMLInputElement;
             if (next) next.focus();
           }
@@ -127,6 +147,42 @@ export class PublishController {
             if (prev) prev.focus();
           }
         });
+        input.addEventListener('paste', (e) => {
+          const text = e.clipboardData?.getData('text');
+          if (!text) return;
+          const cleaned = text.trim().replace(/[。·]/g, '.');
+          if (cleaned.includes('.')) {
+            e.preventDefault();
+            const parts = cleaned.split('.');
+            if (parts.length >= 2) {
+              const inp1 = overlay.querySelector(`#${ids[0]}`) as HTMLInputElement;
+              const inp2 = overlay.querySelector(`#${ids[1]}`) as HTMLInputElement;
+              const inp3 = overlay.querySelector(`#${ids[2]}`) as HTMLInputElement;
+              if (inp1) inp1.value = [...(parts[0] || '').trim()].slice(0, 8).join('');
+              if (inp2) inp2.value = [...(parts[1] || '').trim()].slice(0, 8).join('');
+              if (inp3) inp3.value = [...(parts[2] || '').trim()].slice(0, 8).join('');
+              if (inp3?.value) {
+                inp3.focus();
+              } else if (inp2?.value) {
+                inp3?.focus();
+              } else {
+                inp2?.focus();
+              }
+            }
+          }
+        });
+      });
+
+      overlay.querySelector('#pkl-eye')?.addEventListener('click', (e) => {
+        const btn = e.currentTarget as HTMLButtonElement;
+        const firstInp = overlay.querySelector(`#${ids[0]}`) as HTMLInputElement;
+        const isMasked = firstInp?.type === 'password';
+        const newType = isMasked ? 'text' : 'password';
+        ids.forEach(id => {
+          const inp = overlay.querySelector(`#${id}`) as HTMLInputElement;
+          if (inp) inp.type = newType;
+        });
+        btn.textContent = isMasked ? '🙈' : '👁️';
       });
     }
   }
