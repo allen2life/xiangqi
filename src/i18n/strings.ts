@@ -317,6 +317,13 @@ export const STRINGS: StringMap = {
   'provisions.useWagon': ['使用木牛流马（+5 粮草）', 'Use Wooden Ox (+5 provisions)'],
   'provisions.surrender': ['投降认输', 'Surrender'],
 
+  // ── Stalemate (困毙) ──
+  'stalemate.title': ['无处落子（困毙）', 'Stalemate (No Valid Moves)'],
+  'stalemate.exhaustedBody': ['全盘受制，当前仅剩 {valid} 处合法空位，不足以放满手牌（需 {need} 处）。你要么使用解禁符解除禁区，要么困毙认负。', 'Surrounded: only {valid} valid placement(s) available, but {need} required. Either use an Unseal charm to clear forbidden zones, or accept defeat.'],
+  'stalemate.noItemBody': ['全盘受制，当前仅剩 {valid} 处合法空位，不足以放满手牌（需 {need} 处）。已无路可走，困毙判负。', 'Surrounded: only {valid} valid placement(s) available, but {need} required to complete hand. Stalemate defeat.'],
+  'stalemate.useUnseal': ['使用解禁符（解除禁区）', 'Use Unseal (Clear Forbidden Zones)'],
+  'stalemate.defeat': ['困毙判负', 'Accept Defeat'],
+
   // ── Leaderboard ──
   'lb.title': ['排行榜 Top 37', 'Leaderboard Top 37'],
   'lb.tabTotal': ['总排行榜', 'Overall'],
@@ -542,6 +549,7 @@ export const STRINGS: StringMap = {
   'err.resume_item_mismatch': ['续局道具使用记录与引擎动作不一致，不可发布成绩', 'Resumed item usage does not match engine actions — cannot publish'],
   'err.debug_forced_win': ['调试强制胜利，本局不可发布成绩', 'Debug-forced victory — this run cannot be published'],
   'err.surrendered': ['投降认输，本局不可发布成绩', 'Surrendered — this run cannot be published'],
+  'err.no_valid_moves': ['无可落子位置，困毙判负', 'No valid moves — stalemate defeat'],
   'err.binding_init_failed': ['本局发布绑定初始化失败，本局不可发布成绩', 'Run binding initialization failed — cannot publish'],
   'err.item_op_id_failed': ['无法生成有效的道具操作ID', 'Failed to generate a valid item operation ID'],
   'err.item_op_save_failed': ['无法保存道具操作，请检查浏览器存储', 'Failed to save item operation — check browser storage'],

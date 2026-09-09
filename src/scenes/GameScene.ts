@@ -179,6 +179,7 @@ export class GameScene {
           gsap.to(wrapper, { y: wrapper.y + 60, duration: CONFIG.ANIM.PLACE, ease: 'back.out' });
         }
       }
+      this.checkStalemate();
       return true;
     }
     return false;
@@ -588,6 +589,8 @@ export class GameScene {
     // If restored game is already won/lost, show settlement immediately
     if (this.turnManager.gameResult !== GameResult.NONE) {
       setTimeout(() => this.checkGameOver(), 500);
+    } else {
+      setTimeout(() => this.checkStalemate(), 600);
     }
     this.ui.setPendingItemUsage(this.turnManager.pendingItemUsage.pendingUsage);
     if (restoredSave) {
@@ -1137,6 +1140,7 @@ export class GameScene {
     this.refreshUI();
     const validPoints = this.turnManager.getValidPlacements();
     this.intersectionRenderer.showValidPlacements(validPoints);
+    this.checkStalemate();
   }
 
   /** 弹尽粮绝：要么用木牛流马加粮草，要么投降认输（引擎 force_defeat 走正常 LOSE 结算） */
@@ -1170,6 +1174,63 @@ export class GameScene {
       this.checkGameOver();
     });
     overlay.querySelector('#btn-provisions-cancel')!.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  }
+
+  /** 检查是否陷入困毙（合法空位不足以放满手牌） */
+  private checkStalemate(): boolean {
+    if (this.turnManager.gameResult !== GameResult.NONE || this.isAnimating) return false;
+    if (this.pendingReplayRecord || this.replayRunner?.isReplay) return false;
+
+    const required = 3 + (this.turnManager.summonedThisTurn ? 1 : 0);
+    const needed = required - this.turnManager.placed.length;
+    if (needed <= 0) return false;
+
+    const validPoints = this.turnManager.getValidPlacements();
+    if (validPoints.length >= needed) return false;
+
+    // 若已解禁，但全盘可用空位依然不足，则无药可救
+    const hasUnseal = !this.turnManager.unsealed && engineBridge.getPlatformItemCount('unseal') > 0;
+    this.showStalemateDialog(hasUnseal, validPoints.length, needed);
+    return true;
+  }
+
+  private showStalemateDialog(hasUnseal: boolean, validCount: number, neededCount: number): void {
+    if (document.getElementById('stalemate-dialog')) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'ui-panel overlay provisions-dialog';
+    overlay.id = 'stalemate-dialog';
+    const bodyText = hasUnseal
+      ? t('stalemate.exhaustedBody', { valid: validCount, need: neededCount })
+      : t('stalemate.noItemBody', { valid: validCount, need: neededCount });
+    overlay.innerHTML = `
+      <div class="provisions-dialog-card">
+        <div class="provisions-dialog-title">⚠️ ${t('stalemate.title')}</div>
+        <div class="provisions-dialog-body">${bodyText}</div>
+        <div class="provisions-dialog-actions">
+          ${hasUnseal ? `<button class="btn-wagon" id="btn-stalemate-unseal">${t('stalemate.useUnseal')}</button>` : ''}
+          <button class="btn-surrender" id="btn-stalemate-defeat">${t('stalemate.defeat')}</button>
+          <button class="btn-dialog-cancel" id="btn-stalemate-cancel">${t('confirm.cancel')}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    if (hasUnseal) {
+      overlay.querySelector('#btn-stalemate-unseal')?.addEventListener('click', async () => {
+        overlay.remove();
+        await this.ui.onBackpackUseItem?.('unseal');
+        this.refreshUI();
+      });
+    }
+
+    overlay.querySelector('#btn-stalemate-defeat')!.addEventListener('click', () => {
+      overlay.remove();
+      this.turnManager.forceDefeat('err.no_valid_moves');
+      this.refreshUI();
+      this.checkGameOver();
+    });
+
+    overlay.querySelector('#btn-stalemate-cancel')!.addEventListener('click', () => overlay.remove());
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
   }
 
@@ -1239,6 +1300,7 @@ export class GameScene {
       SaveManager.rotateTurnSnapshots(this.turnManager.exportState());
       // Delay settlement so the battle climax (shake/flash/vignette/slow-mo) has room to breathe
       setTimeout(() => this.checkGameOver(), 350);
+      setTimeout(() => this.checkStalemate(), 450);
       // 本回合结算完成：下一回合计时开始（游戏若已结束则计时器空跑，无记录）
       this.turnStats.startTurn(this.currentLevel);
     };

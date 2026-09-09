@@ -677,8 +677,8 @@ export class WasmTurnManager {
     this.syncState();
   }
 
-  forceDefeat(): void {
-    this.markRecordUnpublishable('err.surrendered');
+  forceDefeat(reason: 'err.surrendered' | 'err.no_valid_moves' = 'err.surrendered'): void {
+    this.markRecordUnpublishable(reason);
     engineBridge.forceDefeat();
     this.syncState();
   }
