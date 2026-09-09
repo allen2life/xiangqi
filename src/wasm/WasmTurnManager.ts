@@ -400,6 +400,10 @@ export class WasmTurnManager {
     return engineBridge.getValidPlacements();
   }
 
+  getBoardValidPlacements(): Point[] {
+    return engineBridge.getValidPlacements();
+  }
+
   placeOnBoard(col: number, row: number): number {
     if (this.phase !== GamePhase.PLACE_PIECE || this.selectedHandIndex < 0) return -1;
     const piece = this.hand[this.selectedHandIndex];

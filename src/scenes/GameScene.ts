@@ -1181,12 +1181,13 @@ export class GameScene {
   private checkStalemate(): boolean {
     if (this.turnManager.gameResult !== GameResult.NONE || this.isAnimating) return false;
     if (this.pendingReplayRecord || this.replayRunner?.isReplay) return false;
+    if (this.turnManager.phase !== GamePhase.SELECT_HAND && this.turnManager.phase !== GamePhase.PLACE_PIECE) return false;
 
     const required = 3 + (this.turnManager.summonedThisTurn ? 1 : 0);
     const needed = required - this.turnManager.placed.length;
     if (needed <= 0) return false;
 
-    const validPoints = this.turnManager.getValidPlacements();
+    const validPoints = this.turnManager.getBoardValidPlacements();
     if (validPoints.length >= needed) return false;
 
     // 若已解禁，但全盘可用空位依然不足，则无药可救
@@ -1220,6 +1221,7 @@ export class GameScene {
         overlay.remove();
         await this.ui.onBackpackUseItem?.('unseal');
         this.refreshUI();
+        this.checkStalemate();
       });
     }
 

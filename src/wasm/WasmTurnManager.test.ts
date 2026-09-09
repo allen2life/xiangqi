@@ -31,6 +31,7 @@ const engine = vi.hoisted(() => ({
   removePlatformItem: vi.fn(() => true),
   addPlatformItem: vi.fn(),
   platformSave: vi.fn(),
+  getValidPlacements: vi.fn<() => { col: number; row: number }[]>(() => []),
 }));
 
 vi.mock('./EngineBridge', () => ({
@@ -287,3 +288,16 @@ describe('WasmTurnManager.syncState', () => {
     expect(enemies[0].alive).toBe(true);   // 活体语义优先（引擎枚举死先活后）
   });
 });
+
+describe('WasmTurnManager.getBoardValidPlacements', () => {
+  it('returns valid placements directly from engineBridge even when no hand is selected', () => {
+    engine.getValidPlacements.mockReturnValue([{ col: 1, row: 2 }]);
+    const manager = makeManager();
+    manager.phase = GamePhase.SELECT_HAND;
+    manager.selectedHandIndex = -1;
+
+    expect(manager.getValidPlacements()).toEqual([]);
+    expect(manager.getBoardValidPlacements()).toEqual([{ col: 1, row: 2 }]);
+  });
+});
+
