@@ -43,6 +43,9 @@ export class StartMenuController {
     const nickname = SaveManager.getNickname() || t('lb.anonymous');
     const maxLevel = SaveManager.getMaxLevel();
     const currentChallenge = Math.max(maxLevel + 1, 1);
+    const fullSave = SaveManager.loadGameState();
+    const hasCheckpoint = fullSave !== null && fullSave.phase !== 'game_over';
+    const targetLevel = hasCheckpoint ? fullSave.level : currentChallenge;
     const totalStars = Object.values(SaveManager.getAllLevelStars()).reduce((acc, s) => acc + s, 0);
 
     const star3Wins = getAuthoritativeStar3Wins();
@@ -110,7 +113,7 @@ export class StartMenuController {
                 <span class="hero-btn-icon">⚔️</span>
                 <div class="hero-btn-text-group">
                   <span class="hero-btn-title">${t('start.btnNewGame')}</span>
-                  <span class="hero-btn-badge">${t('start.btnChallengeLevel', { level: String(currentChallenge) })}</span>
+                  <span class="hero-btn-badge">${hasCheckpoint ? t('start.btnContinue', { level: String(targetLevel) }) : t('start.btnChallengeLevel', { level: String(currentChallenge) })}</span>
                 </div>
               </div>
               <span class="hero-btn-glow"></span>
@@ -196,7 +199,7 @@ export class StartMenuController {
     };
 
     document.getElementById('btn-new-game')!.addEventListener('click', () => {
-      onStart(debug(), currentChallenge, false);
+      onStart(debug(), targetLevel, true);
     });
     document.getElementById('btn-endless-ladder')!.addEventListener('click', () => this.showEndlessLadder(onStart));
     document.getElementById('btn-level-select')!.addEventListener('click', () => this.showLevelSelect(onStart));

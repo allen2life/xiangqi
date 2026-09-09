@@ -192,20 +192,19 @@ function getEncryptKey(): string {
   } catch { return ''; }
 }
 
+const GUEST_ENCRYPT_KEY = 'xq-guest-local';
+
 function encode(data: unknown): string {
   const json = JSON.stringify(data);
-  const hash = getEncryptKey();
-  if (hash) return encrypt(json, hash);
-  // Fallback: old obfuscation (for data written before crypto upgrade)
-  const b64 = btoa(json);
-  if (b64.length < 8) return b64;
-  return b64.slice(-4) + b64.slice(4, -4) + b64.slice(0, 4);
+  const hash = getEncryptKey() || GUEST_ENCRYPT_KEY;
+  return encrypt(json, hash);
 }
 
 function decode<T>(stored: string): T {
-  const hash = getEncryptKey();
-  if (hash) {
-    try { return JSON.parse(decrypt(stored, hash)) as T; } catch { /* fall through */ }
+  const hash = getEncryptKey() || GUEST_ENCRYPT_KEY;
+  try { return JSON.parse(decrypt(stored, hash)) as T; } catch { /* fall through */ }
+  if (hash !== GUEST_ENCRYPT_KEY) {
+    try { return JSON.parse(decrypt(stored, GUEST_ENCRYPT_KEY)) as T; } catch { /* fall through */ }
   }
   // Fallback: old deobfuscation (migration)
   try {

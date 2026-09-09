@@ -155,6 +155,7 @@ vi.mock('../../core/SaveManager', () => ({
     getNickname: vi.fn().mockReturnValue('风清扬'),
     getMaxLevel: vi.fn().mockReturnValue(5),
     getAllLevelStars: vi.fn().mockReturnValue({ 1: 3, 2: 3, 3: 2, 4: 3, 5: 1 }),
+    loadGameState: vi.fn().mockReturnValue(null),
   },
 }));
 
@@ -162,6 +163,7 @@ vi.mock('../../i18n', () => ({
   t: vi.fn((key: string, params?: Record<string, string | number>) => {
     let text = key;
     if (key === 'start.btnChallengeLevel') text = '第 {level} 关 · 挑战';
+    if (key === 'start.btnContinue') text = '继续 第 {level} 关';
     if (!params) return text;
     return Object.entries(params).reduce((s, [k, v]) => s.replace(`{${k}}`, String(v)), text);
   }),
@@ -188,6 +190,7 @@ vi.mock('../../utils/buildInfo', () => ({
 }));
 
 import { StartMenuController } from './StartMenuController';
+import { SaveManager } from '../../core/SaveManager';
 import type { DomUIContext } from '../DomUIContext';
 
 describe('StartMenuController Chinese Classical Lobby', () => {
@@ -259,8 +262,29 @@ describe('StartMenuController Chinese Classical Lobby', () => {
     const heroBtn = container.querySelector('#btn-new-game')!;
     heroBtn.click();
 
-    // debug=false, startLevel=6, isCampaign=false
-    expect(onStart).toHaveBeenCalledWith(false, 6, false);
+    // debug=false, startLevel=6, isCampaign=true
+    expect(onStart).toHaveBeenCalledWith(false, 6, true);
+  });
+
+  it('hero CTA shows continue badge and resumes checkpoint level when active save exists', () => {
+    vi.mocked(SaveManager.loadGameState).mockReturnValueOnce({
+      level: 8,
+      phase: 'player_action',
+      history: [],
+      score: 100,
+      timestamp: Date.now(),
+    } as any);
+
+    const ctrl = new StartMenuController(ctx);
+    const onStart = vi.fn();
+    ctrl.showStartMenu(onStart);
+
+    const heroBtn = container.querySelector('#btn-new-game')!;
+    const badgeEl = heroBtn.querySelector('.hero-btn-badge');
+    expect(badgeEl?.textContent).toContain('8');
+
+    heroBtn.click();
+    expect(onStart).toHaveBeenCalledWith(false, 8, true);
   });
 
   it('clicking dock buttons routes to host callbacks', () => {

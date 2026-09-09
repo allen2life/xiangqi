@@ -545,10 +545,13 @@ export class GameScene {
       // Initialize platform state (gold, inventory, item definitions)
       const hash = SaveManager.getHash();
       engineBridge.platformInit(hash, '1');
-      // 无身份（未绑定口令）时无本地 binding —— 单机可玩，仅记录不可发布
+      // 无身份（未绑定口令）时单机可玩：使用 local guest binding 让引擎 record_builder_
+      // 能正常记录与 export_state 序列化（使得刷新/返回首页可恢复对局），同时标记 unpublishable 阻止发布到排行榜
+      const guestHash = '0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20';
+      const effectiveHash = hash || guestHash;
       let binding: RecordBinding | undefined;
       try {
-        binding = createLocalRecordBinding(hash, this.currentLevel);
+        binding = createLocalRecordBinding(effectiveHash, this.currentLevel);
       } catch { /* 保留 undefined */ }
       // V1-016: 挑战/回放模式优先使用 record 中的 config；否则仅闯关模式 (campaignMode) 的 1-5 关加载 JSON
       let levelConfig: string | undefined = this.replayConfig;
@@ -565,9 +568,12 @@ export class GameScene {
       }
       // V1-015/V1-016: 使用回放/挑战 seed（undefined 时由引擎按关卡号生成确定性 seed）
       this.turnManager = new WasmTurnManager(this.currentLevel, this.replaySeed, levelConfig);
-      if (!binding) {
+      if (binding) {
+        this.turnManager.setRecordBinding(binding);
+      }
+      if (!hash) {
         this.turnManager.markRecordUnpublishable('err.identity_invalid');
-      } else if (!this.turnManager.setRecordBinding(binding)) {
+      } else if (!binding || this.turnManager.recordPublishError) {
         this.turnManager.markRecordUnpublishable(this.turnManager.recordPublishError ?? 'toast.engineCompat');
       }
       const bs = this.turnManager.board;
@@ -597,6 +603,7 @@ export class GameScene {
       if (!SaveManager.loadTurnSnapshot()) SaveManager.initializeTurnSnapshots(this.turnManager.exportState());
     } else {
       SaveManager.initializeTurnSnapshots(this.turnManager.exportState());
+      this.saveCheckpoint();
     }
 
     this.ui.refreshQuickBar();

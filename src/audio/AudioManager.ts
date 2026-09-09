@@ -1,5 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
+import { Howl, Howler } from 'howler';
 import { PieceType } from '../core/types';
 
 export type SoundName = 'place' | 'eliminate' | 'cannonFire' | 'cannonExplosion' | 'victory' | 'bgm'
@@ -65,12 +64,10 @@ export class AudioManager {
   private initialized = false;
   private initPromise: Promise<void> | null = null;
   private runtimeUnavailable = false;
-  private bgmVolume = 0;
-  private sfxVolume = 0;
+  private bgmVolume = 0.2;
+  private sfxVolume = 0.6;
   private prefsLoaded = false;
   private bgmDucked = false;
-  private Howl: any = null;
-  private Howler: any = null;
   /** R4: 合成 UI 点击音/失败音用的 AudioContext（优先复用 Howler 已解锁的 ctx） */
   private audioCtx: AudioContext | null = null;
   private static readonly VOLUME_KEY = 'xiangqi-audio-volume';
@@ -104,9 +101,6 @@ export class AudioManager {
   }
 
   private async _init(): Promise<void> {
-    const { Howl, Howler } = await import('howler');
-    this.Howl = Howl;
-    this.Howler = Howler;
     try {
       // bgm 采用 html5 流式播放，减少首屏 Web Audio 整体解码阻塞；SFX 采用 Web Audio 保证低延迟
       await Promise.all(SOUND_DEFS.map(([name, file, defaultVol, loop]) => new Promise<void>((resolve, reject) => {
@@ -135,8 +129,6 @@ export class AudioManager {
     } catch (error) {
       this.sounds.forEach((sound) => sound.unload());
       this.sounds.clear();
-      this.Howl = null;
-      this.Howler = null;
       throw error;
     }
   }
@@ -174,7 +166,7 @@ export class AudioManager {
    */
   private getCtx(): AudioContext | null {
     try {
-      const howlerCtx = this.Howler?.ctx as AudioContext | undefined;
+      const howlerCtx = Howler?.ctx as AudioContext | undefined;
       if (howlerCtx) {
         if (howlerCtx.state === 'suspended') void howlerCtx.resume();
         return howlerCtx;

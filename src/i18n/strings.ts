@@ -260,7 +260,7 @@ export const STRINGS: StringMap = {
   'settings.speed15x': ['1.5x', '1.5x'],
   'settings.speed2x': ['2.0x', '2.0x'],
   'settings.confirmRestart': ['确定要重新开始本关卡吗？当前进度不会保存', 'Restart this level? Current progress will not be saved.'],
-  'settings.confirmHome': ['确定要返回首页吗？当前进度不会保存', 'Return to menu? Current progress will not be saved.'],
+  'settings.confirmHome': ['确定要返回首页吗？对局进度已自动保存，可随时继续', 'Return to home? Game progress is saved and can be resumed at any time.'],
   'confirm.cancel': ['取消', 'Cancel'],
   'confirm.ok': ['确定', 'OK'],
 
