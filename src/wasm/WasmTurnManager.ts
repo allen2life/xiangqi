@@ -470,9 +470,8 @@ export class WasmTurnManager {
 
   canConfirm(): boolean {
     const okPhase = this.phase === GamePhase.CONFIRMING || this.phase === GamePhase.PLACE_PIECE || this.phase === GamePhase.SELECT_HAND;
-    // 全落子门控：3 张手牌全部放置才能确定出牌；召唤英雄后 3+1=4 张
-    const required = 3 + (this.summonedThisTurn ? 1 : 0);
-    return okPhase && this.placed.length >= required;
+    // 自由出牌门控：只要放置了至少 1 枚棋子即可确定出牌；仅扣除实际出战棋子的粮草
+    return okPhase && this.placed.length >= 1;
   }
 
   confirm(): ResolveStep[] {

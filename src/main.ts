@@ -112,6 +112,7 @@ function mountGame(app: Application): void {
 
   const game = new GameScene(app);
   game.start();
+  (window as any).__game = game;
   renderNow(); // 首帧：背景渐变（棋盘由 init → refreshUI 补帧）
 
   initRenderLoop(app);

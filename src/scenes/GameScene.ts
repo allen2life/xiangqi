@@ -1184,22 +1184,21 @@ export class GameScene {
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
   }
 
-  /** 检查是否陷入困毙（合法空位不足以放满手牌） */
+  /** 检查是否陷入困毙（已落子为 0 且无任何合法空位可出牌） */
   private checkStalemate(): boolean {
     if (this.turnManager.gameResult !== GameResult.NONE || this.isAnimating) return false;
     if (this.pendingReplayRecord || this.replayRunner?.isReplay) return false;
     if (this.turnManager.phase !== GamePhase.SELECT_HAND && this.turnManager.phase !== GamePhase.PLACE_PIECE) return false;
 
-    const required = 3 + (this.turnManager.summonedThisTurn ? 1 : 0);
-    const needed = required - this.turnManager.placed.length;
-    if (needed <= 0) return false;
+    // 只要已落子 >= 1，即可直接确认出牌，不会困毙
+    if (this.turnManager.placed.length >= 1) return false;
 
     const validPoints = this.turnManager.getBoardValidPlacements();
-    if (validPoints.length >= needed) return false;
+    if (validPoints.length >= 1) return false;
 
-    // 若已解禁，但全盘可用空位依然不足，则无药可救
+    // 若已解禁，但全盘可用空位依然为 0，则无药可救
     const hasUnseal = !this.turnManager.unsealed && engineBridge.getPlatformItemCount('unseal') > 0;
-    this.showStalemateDialog(hasUnseal, validPoints.length, needed);
+    this.showStalemateDialog(hasUnseal, validPoints.length, 1);
     return true;
   }
 

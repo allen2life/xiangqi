@@ -170,26 +170,19 @@ describe('WasmTurnManager.provisions', () => {
   });
 });
 
-describe('WasmTurnManager.canConfirm full-hand gate', () => {
-  it('requires all 3 hand cards placed before confirming', () => {
+describe('WasmTurnManager.canConfirm 自由出牌门控', () => {
+  it('requires at least 1 piece placed before confirming', () => {
     const manager = makeManager();
-    manager.placed = [
-      makeHandPiece(PieceType.PAWN, 'p1'),
-      makeHandPiece(PieceType.PAWN, 'p2'),
-    ];
+    manager.placed = [];
     expect(manager.canConfirm()).toBe(false);
-    manager.placed.push(makeHandPiece(PieceType.PAWN, 'p3'));
+    manager.placed.push(makeHandPiece(PieceType.PAWN, 'p1'));
     expect(manager.canConfirm()).toBe(true);
   });
 
-  it('requires 3+1 cards placed after summoning a hero', () => {
+  it('allows confirming with 1 piece even after summoning a hero', () => {
     const manager = makeManager();
     manager.summonedThisTurn = true;
-    manager.placed = [
-      makeHandPiece(PieceType.PAWN, 'p1'),
-      makeHandPiece(PieceType.PAWN, 'p2'),
-      makeHandPiece(PieceType.PAWN, 'p3'),
-    ];
+    manager.placed = [];
     expect(manager.canConfirm()).toBe(false);
     manager.placed.push(makeHandPiece(PieceType.HORSE_IRON, 'h1'));
     expect(manager.canConfirm()).toBe(true);
