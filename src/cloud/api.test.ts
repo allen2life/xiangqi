@@ -7,7 +7,7 @@ describe('lightweight run binding', () => {
 
     expect(binding.hash).toBe('ab'.repeat(32));
     expect(binding.levelId).toBe(7);
-    expect(binding.rulesetId).toBe('xiangqiblast-v9-fullhand');
+    expect(binding.rulesetId).toBe('xiangqiblast-v10-casual5m');
     expect(binding.runNonce).toMatch(/^[0-9a-f]{64}$/);
     expect(binding.issuedAt).toBe(1_000);
     expect(binding.expiresAt).toBeGreaterThan(binding.issuedAt);

@@ -61,10 +61,15 @@ export class PublishController {
     overlay.id = 'publish-overlay';
 
     if (hasHash) {
+      const cachedNick = SaveManager.getNickname();
       overlay.innerHTML = `
         <div class="publish-card">
           <div class="publish-title">🏆 ${t('publish.title')}</div>
           <div class="publish-data-row">${t('publish.totalScore', { score: this.ctx.state.lastSettlementData.totalScore })}</div>
+          <div class="publish-field">
+            <label class="publish-label">${t('publish.nicknameLabel')}</label>
+            <input class="publish-input" id="pub-nickname" maxlength="20" placeholder="${t('publish.nicknamePlaceholder')}" value="${this.escapeAttr(cachedNick)}">
+          </div>
           <div class="publish-cost-row">${t('publish.cost')}</div>
           <div class="publish-actions">
             <button class="publish-btn cancel" id="btn-pub-cancel">${t('publish.cancel')}</button>
@@ -109,10 +114,11 @@ export class PublishController {
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
     overlay.querySelector('#btn-pub-confirm')!.addEventListener('click', () => this.handlePublishConfirm(overlay));
 
+    overlay.querySelector('#pub-nickname')?.addEventListener('input', (e) => {
+      SaveManager.saveNickname((e.target as HTMLInputElement).value);
+    });
+
     if (!hasHash) {
-      overlay.querySelector('#pub-nickname')?.addEventListener('input', (e) => {
-        SaveManager.saveNickname((e.target as HTMLInputElement).value);
-      });
       const ids = ['pkl1', 'pkl2', 'pkl3'];
       ids.forEach((id, i) => {
         const input = overlay.querySelector(`#${id}`) as HTMLInputElement;

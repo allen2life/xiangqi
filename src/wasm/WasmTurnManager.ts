@@ -99,7 +99,7 @@ export class WasmTurnManager {
   summonedThisTurn = false;
   unsealed = false;
   readonly MAX_STORM_CHARGE = 5;
-  readonly STORM_MIN_LEVEL = 5;
+  readonly STORM_MIN_LEVEL = 1;
 
   // Loong soul state
   loongFlamePositions: Point[] = [];

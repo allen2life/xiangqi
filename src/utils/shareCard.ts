@@ -8,6 +8,8 @@ export interface BattleCardOptions {
   nickname: string;
   replayCode: string;
   shareUrl: string;
+  formationName?: string;
+  callout?: string;
 }
 
 export async function showBattleShareCard(options: BattleCardOptions): Promise<void> {
@@ -84,11 +86,12 @@ async function renderBattleCardCanvas(options: BattleCardOptions): Promise<strin
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
+  const isEn = getLang() === 'en';
   ctx.font = 'bold 44px "STKaiti", "KaiTi", "Noto Serif SC", serif';
   ctx.fillStyle = '#ffd700';
   ctx.shadowColor = 'rgba(255, 215, 0, 0.5)';
   ctx.shadowBlur = 12;
-  ctx.fillText('象 棋 风 暴', width / 2, 110);
+  ctx.fillText(isEn ? 'XIANGQI BLAST' : '龙 魂 象 棋', width / 2, 110);
 
   ctx.font = '20px sans-serif';
   ctx.fillStyle = 'rgba(212, 175, 55, 0.7)';
@@ -102,18 +105,22 @@ async function renderBattleCardCanvas(options: BattleCardOptions): Promise<strin
   ctx.lineTo(width - 120, 180);
   ctx.stroke();
 
-  // 5. 玩家身份与战报头衔
+  // 5. 玩家身份与阵法头衔
   ctx.font = 'bold 32px "STKaiti", "Noto Serif SC", serif';
   ctx.fillStyle = '#ffffff';
   ctx.fillText(options.nickname, width / 2, 230);
 
   ctx.font = '22px sans-serif';
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-  ctx.fillText(`破阵大捷 · 第 ${options.level} 关`, width / 2, 275);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.68)';
+  const lvLabel = isEn
+    ? `Level ${options.level}${options.formationName ? ` · ${options.formationName}` : ''}`
+    : `破阵大捷 · 第 ${options.level} 关${options.formationName ? ` · ${options.formationName}` : ''}`;
+  ctx.fillText(lvLabel, width / 2, 275);
 
-  // 6. 星级展示
+  // 6. 三星级展示
   ctx.font = '54px sans-serif';
-  const starStr = '★'.repeat(Math.min(5, Math.max(0, options.stars))) + '☆'.repeat(Math.max(0, 5 - options.stars));
+  const clampedStars = Math.min(3, Math.max(0, options.stars));
+  const starStr = '★'.repeat(clampedStars) + '☆'.repeat(3 - clampedStars);
   ctx.fillStyle = '#ffd700';
   ctx.shadowColor = 'rgba(255, 215, 0, 0.6)';
   ctx.shadowBlur = 16;
@@ -141,7 +148,7 @@ async function renderBattleCardCanvas(options: BattleCardOptions): Promise<strin
   ctx.fillText(String(options.score), width / 2, badgeY + 15);
   ctx.shadowBlur = 0;
 
-  // 8. 战局战果印章（朱砂印章红）
+  // 8. 战局战果印章（朱砂印章红，优先展示绝杀称号）
   ctx.save();
   ctx.translate(width / 2 + 180, badgeY - 90);
   ctx.rotate((12 * Math.PI) / 180);
@@ -150,10 +157,18 @@ async function renderBattleCardCanvas(options: BattleCardOptions): Promise<strin
   ctx.strokeRect(-45, -45, 90, 90);
   ctx.font = 'bold 28px "STKaiti", "KaiTi", serif';
   ctx.fillStyle = 'rgba(184, 58, 42, 0.9)';
-  ctx.fillText('大', -20, -16);
-  ctx.fillText('捷', 20, -16);
-  ctx.fillText('无', -20, 20);
-  ctx.fillText('双', 20, 20);
+  const stampChars = [...(options.callout || '').replace(/[·!！\s&]/g, '')].slice(0, 4);
+  if (stampChars.length === 4) {
+    ctx.fillText(stampChars[0], -20, -16);
+    ctx.fillText(stampChars[1], 20, -16);
+    ctx.fillText(stampChars[2], -20, 20);
+    ctx.fillText(stampChars[3], 20, 20);
+  } else {
+    ctx.fillText('大', -20, -16);
+    ctx.fillText('捷', 20, -16);
+    ctx.fillText('无', -20, 20);
+    ctx.fillText('双', 20, 20);
+  }
   ctx.restore();
 
   // 9. 下方二维码区

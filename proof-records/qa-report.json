@@ -1,0 +1,10 @@
+{
+  "passed": true,
+  "timestamp": "2026-10-27T01:03:32.776Z",
+  "targetUrl": "http://127.0.0.1:5173",
+  "proofVideo": "Y:\\sites\\chessblast\\xiangqi\\proof-records\\proof_playtest_1793063010484.mp4",
+  "errors": {
+    "consoleErrors": [],
+    "pageErrors": []
+  }
+}

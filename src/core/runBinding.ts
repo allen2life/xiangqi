@@ -1,6 +1,6 @@
 import { AppError } from '../i18n/AppError';
 
-export const RECORD_RULESET_ID = 'xiangqiblast-v9-fullhand' as const;
+export const RECORD_RULESET_ID = 'xiangqiblast-v10-casual5m' as const;
 export const RECORD_PROTOCOL_VERSION = 4 as const;
 
 export interface RunStartData {

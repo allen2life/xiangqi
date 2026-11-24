@@ -1,7 +1,7 @@
 import { Application, Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
 import gsap from 'gsap';
 import { CONFIG } from '../config';
-import { screenToLogical, logicalToScreen, setBoardParams } from '../utils/coord';
+import { screenToLogical, logicalToScreen, setBoardParams, screenToLogicalMagnetic } from '../utils/coord';
 import { Camp, GamePhase, GameResult, PieceType } from '../core/types';
 import type { ResolveStep, Point } from '../core/types';
 import { SkillEffectPlayer } from '../effects/SkillEffectPlayer';
@@ -10,7 +10,9 @@ import { GOLD_THEME } from '../effects/themes/GoldTheme';
 import { SHATTER_THEME } from '../effects/themes/ShatterTheme';
 import { CharacterShatterPool } from '../effects/CharacterShatterPool';
 import { KINGS_MEETING } from '../effects/EffectConstants';
+import { playTransientShockwave } from '../effects/ShockwaveHelper';
 import { WasmTurnManager, wasmToTsPiece, TS_PIECE_TO_WASM } from '../wasm/WasmTurnManager';
+import type { PieceObj } from '../wasm/WasmTurnManager';
 import { PieceType as WasmPieceType, PIECE_NAMES as WasmPieceNames } from '../wasm/types';
 import type { RecruitSpawn } from '../wasm/types';
 import { SaveManager } from '../core/SaveManager';
@@ -25,6 +27,7 @@ import { t, serverErrorMessage } from '../i18n';
 import { BoardRenderer } from '../renderers/BoardRenderer';
 import { PieceRenderer, getPieceIconTexture } from '../renderers/PieceRenderer';
 import { IntersectionRenderer } from '../renderers/IntersectionRenderer';
+import type { PreviewTargetMarker } from '../renderers/IntersectionRenderer';
 import { CloudSyncUI } from '../cloud/CloudSyncUI';
 import { queryRank, getCoinBalance, walletGrant, getSealWins, getReplayByUser } from '../cloud/api';
 import { createLocalRecordBinding, type RecordBinding } from '../core/runBinding';
@@ -35,7 +38,10 @@ import type { UIBridge, PieceInfo, SettlementData } from '../ui/UIBridge';
 import { Layout } from '../ui/Layout';
 import { EngineItemType } from '../wasm/types';
 import { LoongLamp } from './LoongLamp';
-import { DailyController } from '../ui/controllers/DailyController';
+import { DailyController, getTodayDateStr, dailyDateToSeed } from '../ui/controllers/DailyController';
+import { CAMPAIGN_LEVEL_COUNT, getFormationName, getFormationTip } from '../config/levelMeta';
+import { copyToClipboard } from '../ui/utils/domHelpers';
+import { PIECE_LABELS } from '../ui/utils/pieceIcons';
 import { FtueController } from '../ui/controllers/FtueController';
 import { ReplayController, parseXqbrRecord } from '../ui/controllers/ReplayController';
 import type { XqbrRecord } from '../ui/controllers/ReplayController';
@@ -63,6 +69,7 @@ export class GameScene {
   private effectPlayer!: SkillEffectPlayer;
   private boundOnKeyDown: ((e: KeyboardEvent) => void) | null = null;
   private boundOnResize: (() => void) | null = null;
+  private boundOnPieceStyleChange: (() => void) | null = null;
   private _resizeTimer: ReturnType<typeof setTimeout> | null = null;
   private currentThemeId: 'ink' | 'gold' | 'shatter' = 'shatter';
   private removeTl: gsap.core.Timeline | null = null;
@@ -74,6 +81,14 @@ export class GameScene {
   private debugMode = false;
   /** V1-016: Challenge mode target score (null = normal mode) */
   private challengeTargetScore: number | null = null;
+  /** 每日全球同盘挑战日期 (YYYY-MM-DD)，普通局为 null */
+  private dailyChallengeDate: string | null = null;
+  /** 本局起始种子（用于免后端同局挑战链接） */
+  private currentRunSeed = 0;
+  /** 本回合已打出击杀的棋子类型与高光绝杀称号 */
+  private turnKillTypes: PieceType[] = [];
+  private turnTriggeredClassicCallout = false;
+  private lastVictoryCallout = '';
   /** 最近一次结算数据（用于分享回放） */
   private lastSettlementData: SettlementData | null = null;
   /** 是否为闯关模式（true=加载 JSON 手工布局, false=无尽程序生成） */
@@ -89,6 +104,8 @@ export class GameScene {
   /** Mobile touch-up placement state */
   private isTouchPlacing = false;
   private activeTouchTarget: Point | null = null;
+  private activeLockedTarget: Point | null = null;
+  private handDragCleanup: (() => void) | null = null;
   private settledLoongSouls = 0;
   private animScore = 0;
   /** 当前回合内已发生的击杀步数，用于连击音高递增 */
@@ -116,7 +133,8 @@ export class GameScene {
   // ═══════════════════════════════════════════════════════════════════
 
   /** V1-016: Start a specific level directly (used by challenge mode). */
-  private beginLevel(level: number, seed?: number, configJson?: string): void {
+  private beginLevel(level: number, seed?: number, configJson?: string, forceCampaign?: boolean): void {
+    this.dailyChallengeDate = null;
     this.debugMode = false;
     this.currentLevel = level;
     this.replaySeed = seed;
@@ -125,7 +143,25 @@ export class GameScene {
     this.replayRunner?.destroy();
     this.replayRunner = null;
     this.pendingReplayRecord = null;
-    this.campaignMode = !!configJson;
+    this.campaignMode = forceCampaign ?? !!configJson;
+    SaveManager.clearGameState();
+    this.ui.hideStartMenu();
+    void loadEngine();
+    this.showEnterBattle();
+  }
+
+  /** 启动每日全球同盘挑战（按日期固定确定性种子，全局玩家同一局） */
+  private beginDailyChallenge(dateStr: string): void {
+    this.dailyChallengeDate = dateStr;
+    this.challengeTargetScore = null;
+    this.debugMode = false;
+    this.currentLevel = 10;
+    this.replaySeed = dailyDateToSeed(dateStr);
+    this.replayConfig = undefined;
+    this.replayRunner?.destroy();
+    this.replayRunner = null;
+    this.pendingReplayRecord = null;
+    this.campaignMode = false;
     SaveManager.clearGameState();
     this.ui.hideStartMenu();
     void loadEngine();
@@ -134,6 +170,7 @@ export class GameScene {
 
   /** V1-015: Start replay playback mode — init engine with record's seed and auto-play actions. */
   private beginReplay(record: XqbrRecord): void {
+    this.dailyChallengeDate = null;
     this.pendingReplayRecord = record;
     // 直接进入回放，不显示"进入战斗"动画；同时清空结算页状态，避免引擎状态变更后误用
     this.debugMode = false;
@@ -163,11 +200,12 @@ export class GameScene {
   }
 
   /** 统一放置棋子逻辑（含落子动画、技能指示圈展示、粮草告警） */
-  private doPlacePiece(col: number, row: number): boolean {
+  private doPlacePiece(col: number, row: number, originX?: number, originY?: number): boolean {
     const placeRet = this.turnManager.placeOnBoard(col, row);
     // 引擎兜底：选牌校验后的残余粮草不足（正常流程由选牌拦截，此处防御）
     if (placeRet === -7) this.ui.showToast(t('toast.noProvisions'), 1.5);
     if (placeRet === 0) {
+      this.clearEnemyInspect();
       this.intersectionRenderer.clearSkillPreview();
       this.refreshUI();
       const lastPlaced = this.turnManager.placed[this.turnManager.placed.length - 1];
@@ -175,8 +213,17 @@ export class GameScene {
         this.intersectionRenderer.addSkillRange(lastPlaced.id, lastPlaced.skill.getAttackRange(lastPlaced.position!));
         const wrapper = this.pieceRenderer.getContainer(lastPlaced.id);
         if (wrapper) {
-          wrapper.y -= 60;
-          gsap.to(wrapper, { y: wrapper.y + 60, duration: CONFIG.ANIM.PLACE, ease: 'back.out' });
+          const targetPos = logicalToScreen(col, row);
+          // 真正的磁吸落子：棋子从玩家点击/松手的屏幕原点斜向磁吸吸入目标交叉点
+          const startX = originX !== undefined ? originX : targetPos.x;
+          const startY = originY !== undefined ? originY - 45 : targetPos.y - 70;
+          wrapper.x = startX;
+          wrapper.y = startY;
+          wrapper.scale.set(0.8, 1.25);
+          gsap.timeline()
+            .to(wrapper, { x: targetPos.x, y: targetPos.y, duration: CONFIG.ANIM.PLACE, ease: 'power2.in' })
+            .to(wrapper.scale, { x: 1.35, y: 0.65, duration: 0.08, ease: 'power1.out' })
+            .to(wrapper.scale, { x: 1.0, y: 1.0, duration: 0.28, ease: 'back.out(3)' });
         }
       }
       this.checkStalemate();
@@ -189,12 +236,15 @@ export class GameScene {
     const fullSave = SaveManager.loadGameState();
     const hasCheckpoint = fullSave !== null && fullSave.phase !== GamePhase.GAME_OVER;
 
+    // 自动为首次访客生成持久身份，免口令弹窗直接可发榜/分享/挑战
+    SaveManager.ensureGuestIdentity();
+
+    // 初始化平台存档（含游客本地钱包/道具），确保主菜单能正确显示金币与龙魂
+    const hash = SaveManager.getHash();
+    engineBridge.platformInit(hash, '1');
+
     // V1-012: 从服务端同步权威 star3 wins 计数（不阻塞主流程）
-    if (SaveManager.hasHash()) {
-      const hash = SaveManager.getHash();
-      // 先初始化平台并加载本地存档（道具/金币），确保 player_hash_ 有值，
-      // 避免后续 platformSetBalance → save_state 用空 hash 加密覆盖存档
-      engineBridge.platformInit(hash, '1');
+    if (hash) {
       getSealWins(hash)
         .then(res => {
           if (res.code === 0 && res.data) {
@@ -216,7 +266,7 @@ export class GameScene {
       }
     }
 
-    // V1-015: Check URL for replay code (?replay=XXXXXX)
+    // V1-015: Check URL for replay code (?replay=XXXXXX) or daily board (?daily=YYYY-MM-DD)
     const urlParams = new URLSearchParams(window.location.search);
     const replayCode = urlParams.get('replay');
     if (replayCode) {
@@ -242,6 +292,48 @@ export class GameScene {
       );
       return;
     }
+
+    const dailyParam = urlParams.get('daily');
+    if (dailyParam && /^\d{4}-\d{2}-\d{2}$/.test(dailyParam)) {
+      window.history.replaceState({}, '', window.location.pathname);
+      this.beginDailyChallenge(dailyParam);
+      return;
+    }
+
+    // 免后端同局挑战链接 (?challenge=1&lv=N&seed=S&target=T&mode=c)
+    if (urlParams.get('challenge') === '1') {
+      const lv = parseInt(urlParams.get('lv') || '0', 10);
+      const seed = parseInt(urlParams.get('seed') || '0', 10);
+      const target = parseInt(urlParams.get('target') || '0', 10);
+      const isCamp = urlParams.get('mode') === 'c';
+      window.history.replaceState({}, '', window.location.pathname);
+      if (lv >= 1 && seed > 0) {
+        const ctrl = new ReplayController();
+        ctrl.showChallengeIntro(lv, target,
+          () => { this.challengeTargetScore = target > 0 ? target : null; this.beginLevel(lv, seed, undefined, isCamp); },
+          () => { this.start(); },
+        );
+        return;
+      }
+    }
+
+    this.ui.onDailyChallenge = () => {
+      this.beginDailyChallenge(getTodayDateStr());
+    };
+
+    this.ui.onCopyChallengeLink = async () => {
+      const d = this.lastSettlementData;
+      const base = `${window.location.origin}${window.location.pathname}`;
+      const inviteUrl = this.dailyChallengeDate
+        ? `${base}?daily=${this.dailyChallengeDate}`
+        : `${base}?challenge=1&lv=${this.currentLevel}&seed=${this.currentRunSeed || ((this.currentLevel * 73856093 + 1) >>> 0)}&target=${d?.finalScore ?? 0}${this.campaignMode ? '&mode=c' : ''}`;
+      const title = d?.formationName ? `${d.level}·${d.formationName}` : `${this.currentLevel}`;
+      const text = this.dailyChallengeDate
+        ? DailyController.formatDailyShareText(this.dailyChallengeDate, d?.finalScore ?? 0, d?.totalStars ?? 0, d?.turnCount ?? 1)
+        : `🐉 ${t('game.name')} [${title}] ${d?.finalScore ?? 0} pts\n${inviteUrl}`;
+      const ok = await copyToClipboard(text);
+      this.ui.showToast(ok ? t('invite.copied') : t('replay.copyFail'), 2.2);
+    };
 
     this.ui.onCloudSync = () => {
       const syncUI = new CloudSyncUI(() => this.start());
@@ -334,7 +426,7 @@ export class GameScene {
     this.ui.onShowPublishHint = () => { this.ui.showPublishHint(); };
     this.ui.onShowPublishPanel = () => { this.ui.showPublishPanel(); };
     this.ui.showStartMenu((debugMode: boolean, startLevel: number, isCampaign?: boolean) => {
-      // 无身份（未绑定口令）也可直接开始游戏——单机可玩，云同步时才需要身份
+      this.dailyChallengeDate = null;
       this.debugMode = debugMode;
       this.currentLevel = startLevel;
       this.campaignMode = isCampaign ?? true;
@@ -356,7 +448,14 @@ export class GameScene {
   private showEnterBattle(): void {
     const el = document.createElement('div');
     el.className = 'enter-battle';
-    el.innerHTML = `<div class="glass-panel" style="width:280px;padding:32px;text-align:center;border-radius:16px;"><div class="level-text">${t('battle.level', { level: this.currentLevel })}</div><div class="battle-text">${t('battle.enter')}</div></div>`;
+    const formation = !this.dailyChallengeDate ? getFormationName(this.currentLevel) : '';
+    const tip = !this.dailyChallengeDate ? getFormationTip(this.currentLevel) : '';
+    const subHtml = this.dailyChallengeDate
+      ? `<div class="enter-battle-meta">${t('daily.levelTag', { date: this.dailyChallengeDate })}</div>`
+      : formation
+        ? `<div class="enter-battle-meta">「${formation}」</div>${tip ? `<div class="enter-battle-tip">${tip}</div>` : ''}`
+        : '';
+    el.innerHTML = `<div class="glass-panel" style="width:min(300px,88vw);padding:28px 24px;text-align:center;border-radius:16px;"><div class="level-text">${t('battle.level', { level: this.currentLevel })}</div>${subHtml}<div class="battle-text">${t('battle.enter')}</div></div>`;
     document.body.appendChild(el);
     const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
     if (reducedMotion) {
@@ -370,12 +469,15 @@ export class GameScene {
   private async init(): Promise<void> {
     const cw = window.innerWidth, ch = window.innerHeight;
     this.settledLoongSouls = 0;
+    this.lastVictoryCallout = '';
     this.ui.init();
 
     // 回放模式下禁用所有交互回调（手牌选择/预览点击/确认/重开），
     // 防止用户在回放过程中操作手牌、落子
     const isReplay = !!this.pendingReplayRecord || !!this.replayRunner?.isReplay;
     this.ui.onHandSelect = isReplay ? null : (i) => this.onHandSelect(i);
+    this.ui.onHandDragStart = isReplay ? null : (i, x, y, pt) => this.handleHandDragStart(i, x, y, pt);
+    this.ui.onUndoPlacement = isReplay ? null : () => this.onUndo();
     this.ui.onPreviewClick = isReplay ? null : (i) => {
       const p = this.turnManager.placed[i];
       if (!p) return;
@@ -387,6 +489,7 @@ export class GameScene {
       this.refreshUI();
     };
     this.ui.onConfirm = isReplay ? null : () => this.onConfirm();
+    this.ui.onSkipTurn = isReplay ? null : () => this.onSkipTurn();
     this.ui.onRestart = isReplay ? null : () => { this.restart(); };
     this.ui.onMenu = () => { this.cleanupScene(); this.start(); };
 
@@ -439,6 +542,7 @@ export class GameScene {
           this.refreshUI();
           this.saveCheckpoint();
           this.ui.showToast(t('toast.redrawDone'), 1.5);
+          return true;
         }
         this.ui.showToast(t('toast.cannotRedraw'), 1.5);
         return false;
@@ -553,9 +657,9 @@ export class GameScene {
       try {
         binding = createLocalRecordBinding(effectiveHash, this.currentLevel);
       } catch { /* 保留 undefined */ }
-      // V1-016: 挑战/回放模式优先使用 record 中的 config；否则仅闯关模式 (campaignMode) 的 1-5 关加载 JSON
+      // 挑战/回放模式优先使用 record 中的 config；否则闯关模式加载 1~20 关手工名局
       let levelConfig: string | undefined = this.replayConfig;
-      if (!levelConfig && this.campaignMode && this.currentLevel >= 1 && this.currentLevel <= 5) {
+      if (!levelConfig && this.campaignMode && this.currentLevel >= 1 && this.currentLevel <= CAMPAIGN_LEVEL_COUNT) {
         try {
           const resp = await fetch(`${import.meta.env.BASE_URL}levels/level_${1000 + this.currentLevel}.json`);
           if (resp.ok) {
@@ -566,7 +670,7 @@ export class GameScene {
           }
         } catch { /* 无对应 JSON 文件时使用程序生成 */ }
       }
-      // V1-015/V1-016: 使用回放/挑战 seed（undefined 时由引擎按关卡号生成确定性 seed）
+      this.currentRunSeed = this.replaySeed ?? ((this.currentLevel * 73856093 + 1) >>> 0);
       this.turnManager = new WasmTurnManager(this.currentLevel, this.replaySeed, levelConfig);
       if (binding) {
         this.turnManager.setRecordBinding(binding);
@@ -689,6 +793,9 @@ export class GameScene {
     if (this.boundOnKeyDown) window.removeEventListener('keydown', this.boundOnKeyDown);
     this.boundOnKeyDown = (e) => this.onKeyDown(e);
     window.addEventListener('keydown', this.boundOnKeyDown);
+    if (this.boundOnPieceStyleChange) window.removeEventListener('piecestylechange', this.boundOnPieceStyleChange);
+    this.boundOnPieceStyleChange = () => this.refreshUI();
+    window.addEventListener('piecestylechange', this.boundOnPieceStyleChange);
 
     // 接入屏幕震动目标 + reduced-motion 偏好
     this.effectPlayer.setShakeTarget(this.app.stage);
@@ -704,8 +811,16 @@ export class GameScene {
   // ═══════════════════════════════════════════════════════════════════
 
   private refreshUI(): void {
+    const aliveGuards = this.turnManager.enemyUnits.filter(u => this.isRoyalGuardUnit(u)).length;
+    const annotatedEnemies = this.turnManager.enemyUnits
+      .filter(u => u.alive)
+      .map(u => {
+        (u as any).isRoyalGuard = this.isRoyalGuardUnit(u);
+        (u as any).isShielded = u.pieceType === PieceType.GENERAL && aliveGuards > 0;
+        return u;
+      });
     const units = [
-      ...this.turnManager.enemyUnits.filter(u => u.alive),
+      ...annotatedEnemies,
       ...this.turnManager.hand.filter(u => u.alive),
       ...this.turnManager.placed,
       ...this.turnManager.boardPieces,
@@ -785,7 +900,7 @@ export class GameScene {
       clearTimeout(safetyTimer);
       onComplete();
     };
-    // Safety: stop pending animations and finish exactly once after 15 seconds.
+    // Safety: stop pending animations and finish cleanly after 4 seconds.
     safetyTimer = setTimeout(() => {
       console.warn('[soulFlight] safety timeout — forcing onComplete');
       for (const timeline of orbTimelines) timeline.kill();
@@ -793,27 +908,25 @@ export class GameScene {
         if (child.label === 'soul-orb') { child.removeFromParent(); child.destroy(); }
       }
       safeComplete();
-    }, 15000);
+    }, 4000);
 
     // Fade out sacrifice pieces and flame effects concurrently with soul flight
-    // (wrappers captured in onConfirm before resolve cleared them)
-    // Cleanup is handled by refreshUI() → renderAll() → clear() in finishTurn
     for (const fp of flamePositions) {
       const key = `${fp.col},${fp.row}`;
       const wrapper = this._sacrificeWrappers.get(key);
       if (wrapper) {
-        gsap.to(wrapper, { alpha: 0, duration: 2.0, ease: 'power2.in' });
+        gsap.to(wrapper, { alpha: 0, duration: 0.45, ease: 'power2.in' });
       }
       const flameGfx = this._flameGraphics.get(key);
       if (flameGfx) {
-        gsap.to(flameGfx, { alpha: 0, duration: 2.0, ease: 'power2.in' });
+        gsap.to(flameGfx, { alpha: 0, duration: 0.45, ease: 'power2.in' });
       }
     }
     this._sacrificeWrappers.clear();
 
     for (let fi = 0; fi < total; fi++) {
       const from = logicalToScreen(flamePositions[fi].col, flamePositions[fi].row);
-      const stagger = fi * 0.3;
+      const stagger = fi * 0.1;
 
       for (let i = 0; i < perFlame; i++) {
         // Create a glowing soul orb with 3 layers
@@ -829,13 +942,13 @@ export class GameScene {
         orb.y = from.y;
         this.previewLayer.addChild(orb);
 
-        // Arc path: gentle curve toward lamp (not screen-top)
+        // Arc path: brisk curve toward lamp
         const midX = (orb.x + lampX) / 2 + (Math.random() - 0.5) * 30;
-        const midY = (orb.y + lampY) / 2 - 18 - Math.random() * 22;
-        const dur = 2.2 + Math.random() * 1.8;  // slower flight
+        const midY = (orb.y + lampY) / 2 - 18 - Math.random() * 20;
+        const dur = 0.65 + Math.random() * 0.25;
 
         const ot = gsap.timeline({
-          delay: stagger + i * 0.1,
+          delay: stagger + i * 0.05,
           onComplete: () => {
             orb.removeFromParent();
             orb.destroy();
@@ -979,7 +1092,7 @@ export class GameScene {
     const stormCharge = this.animatingStormCharge !== null ? this.animatingStormCharge : this.turnManager.stormCharge;
     const stormFrac = this.turnManager.MAX_STORM_CHARGE > 0 ? Math.min(1, stormCharge / this.turnManager.MAX_STORM_CHARGE) : 0;
     const enemyCount = this.turnManager.enemyUnits.filter(u => u.alive && !u.isStatue).length;
-    this.ui.updateHUD({ level: this.currentLevel, score: this.turnManager.score, enemyCount, stormProgress: stormFrac, stormActive: this.turnManager.level >= this.turnManager.STORM_MIN_LEVEL, provisionsRemaining: this.turnManager.provisionsRemaining, provisionsLimit: this.turnManager.provisionsLimit, provisionsBonus: this.turnManager.provisionsBonus });
+    this.ui.updateHUD({ level: this.currentLevel, score: this.turnManager.score, enemyCount, stormProgress: stormFrac, stormActive: true, provisionsRemaining: this.turnManager.provisionsRemaining, provisionsLimit: this.turnManager.provisionsLimit, provisionsBonus: this.turnManager.provisionsBonus });
     this.ui.setSessionEarnedLoongSouls(this.getUnsettledLoongSoulCount());
     this.loongLamp?.setCount(this.getDisplayedLoongSoulCount());
     // 粮草成本随棋子属性从引擎查（引擎唯一来源），供手牌左下角角标显示
@@ -1038,11 +1151,276 @@ export class GameScene {
     });
   }
 
+  /** 触屏瞄准上移约 0.85 格，避免手指遮挡真实落子交叉点与预判标记 */
+  private getAimCoords(x: number, y: number, isTouch: boolean): { x: number; y: number } {
+    if (!isTouch) return { x, y };
+    return { x, y: y - Math.round((Layout.cellSize || 48) * 0.85) };
+  }
+
+  private inEnemyPalace(col: number, row: number): boolean {
+    const cc = Math.floor(this.turnManager.board.cols / 2);
+    const minC = Math.max(0, cc - 1);
+    const maxC = Math.min(this.turnManager.board.cols - 1, cc + 1);
+    return col >= minC && col <= maxC && row >= 0 && row <= 2;
+  }
+
+  /** 与 C++ TurnManager::is_royal_guard 保持一致 */
+  private isRoyalGuardUnit(u: PieceObj): boolean {
+    if (!u.alive || u.camp !== Camp.ENEMY || u.isCity || u.isStatue || u.pieceType === PieceType.GENERAL) {
+      return false;
+    }
+    if (u.pieceType === PieceType.ADVISOR || u.pieceType === PieceType.ELEPHANT) return true;
+    return u.position !== null && this.inEnemyPalace(u.position.col, u.position.row);
+  }
+
+  /** 拖拽/悬停实时预览：计入同回合先手已放棋子的破盾连携效果 */
+  private updatePlacementPreview(col: number, row: number, isValid: boolean): void {
+    const idx = this.turnManager.selectedHandIndex;
+    const piece = idx >= 0 ? this.turnManager.hand[idx] : undefined;
+    if (!piece || !isValid) {
+      this.intersectionRenderer.clearSkillPreview();
+      return;
+    }
+
+    const range = piece.skill.getAttackRange({ col, row });
+    this.intersectionRenderer.showSkillRange(range);
+
+    // 推演先序已放置棋子的击杀，实时反映“第1步破盾 -> 第2步斩首”
+    let remainingGuards = this.turnManager.enemyUnits.filter(u => this.isRoyalGuardUnit(u)).length;
+    const preKilledIds = new Set<string>();
+    for (const prev of this.turnManager.placed) {
+      if (!prev.position) continue;
+      const pWasm = TS_PIECE_TO_WASM[prev.pieceType as PieceType] ?? WasmPieceType.PAWN;
+      const pSpec = engineBridge.getUnitSpec(pWasm);
+      if (!pSpec) continue;
+      const pRange = prev.skill.getAttackRange(prev.position);
+      for (const pt of pRange) {
+        const target = this.turnManager.enemyUnits.find(
+          u => u.alive && !preKilledIds.has(u.id) && u.position?.col === pt.col && u.position?.row === pt.row
+        );
+        if (!target) continue;
+        const tWasm = target.isStatue ? WasmPieceType.STATUE : target.isCity ? WasmPieceType.CITY : (TS_PIECE_TO_WASM[target.pieceType as PieceType] ?? WasmPieceType.PAWN);
+        const tSpec = engineBridge.getUnitSpec(tWasm);
+        const guardBlocked = target.pieceType === PieceType.GENERAL && remainingGuards > 0;
+        if (!guardBlocked && tSpec && pSpec.attack >= tSpec.defense) {
+          preKilledIds.add(target.id);
+          if (this.isRoyalGuardUnit(target)) remainingGuards = Math.max(0, remainingGuards - 1);
+        }
+      }
+    }
+
+    const attackerWasm = TS_PIECE_TO_WASM[piece.pieceType as PieceType] ?? WasmPieceType.PAWN;
+    const attackerSpec = engineBridge.getUnitSpec(attackerWasm);
+
+    const markers: PreviewTargetMarker[] = [];
+    let kills = 0;
+    let shields = 0;
+    let allies = 0;
+    let willDecapitate = false;
+
+    for (const p of range) {
+      const enemy = this.turnManager.enemyUnits.find(
+        u => u.alive && !preKilledIds.has(u.id) && u.position?.col === p.col && u.position?.row === p.row
+      );
+      if (enemy) {
+        const targetWasm = enemy.isStatue
+          ? WasmPieceType.STATUE
+          : enemy.isCity
+            ? WasmPieceType.CITY
+            : (TS_PIECE_TO_WASM[enemy.pieceType as PieceType] ?? WasmPieceType.PAWN);
+        const targetSpec = engineBridge.getUnitSpec(targetWasm);
+        const blockedByGuard = enemy.pieceType === PieceType.GENERAL && remainingGuards > 0;
+        const canKill = !blockedByGuard && !!attackerSpec && !!targetSpec && attackerSpec.attack >= targetSpec.defense;
+        if (canKill) {
+          kills++;
+          if (enemy.pieceType === PieceType.GENERAL) willDecapitate = true;
+          markers.push({ col: p.col, row: p.row, kind: 'kill' });
+        } else {
+          shields++;
+          markers.push({ col: p.col, row: p.row, kind: 'shield' });
+        }
+      }
+
+      const ally = this.turnManager.boardPieces.find(
+        u => u.alive && u.position?.col === p.col && u.position?.row === p.row && u.pieceType !== PieceType.GENERAL
+      );
+      if (ally) {
+        allies++;
+        markers.push({ col: p.col, row: p.row, kind: 'ally' });
+      }
+    }
+
+    let summary = '';
+    let badgeColor = 0xffd700;
+    if (willDecapitate) {
+      summary = t('preview.decapitate');
+      badgeColor = 0xffd700;
+    } else if (kills > 0 && allies > 0) {
+      summary = `${t('preview.kills', { n: kills })} · ${t('preview.allyRisk', { n: allies })}`;
+      badgeColor = 0xff6b35;
+    } else if (kills > 0) {
+      const mult = kills >= 2 ? ` ×${(1 + 0.1 * kills).toFixed(1)}` : '';
+      summary = `${t('preview.kills', { n: kills })}${mult}`;
+      badgeColor = kills >= 3 ? 0xffd700 : 0xff4757;
+    } else if (allies > 0) {
+      summary = t('preview.allyRisk', { n: allies });
+      badgeColor = 0xff6b35;
+    } else if (shields > 0) {
+      summary = t('preview.immune');
+      badgeColor = 0x00d2d3;
+    }
+
+    this.intersectionRenderer.showPreviewMarkers(col, row, markers, summary, badgeColor);
+  }
+
+  private clearEnemyInspect(): void {
+    document.getElementById('enemy-inspect-tip')?.remove();
+    this.intersectionRenderer.clearEnemyThreat();
+    renderNow();
+  }
+
+  /** 点击敌方棋子/城池/石像时单独高亮它的禁区并弹出克制说明 */
+  private inspectEnemyAt(col: number, row: number): boolean {
+    const enemy = this.turnManager.enemyUnits.find(
+      u => u.alive && u.position?.col === col && u.position?.row === row
+    );
+    if (!enemy) {
+      this.clearEnemyInspect();
+      return false;
+    }
+
+    const aliveGuards = this.turnManager.enemyUnits.filter(u => this.isRoyalGuardUnit(u)).length;
+    const wasmPt = enemy.isStatue
+      ? WasmPieceType.STATUE
+      : enemy.isCity
+        ? WasmPieceType.CITY
+        : (TS_PIECE_TO_WASM[enemy.pieceType as PieceType] ?? WasmPieceType.PAWN);
+    const threatRange = (enemy.isCity || enemy.isStatue)
+      ? []
+      : engineBridge.getSkillRange(wasmPt, col, row, 1);
+
+    this.intersectionRenderer.showEnemyThreat(col, row, threatRange);
+    renderNow();
+
+    let desc = '';
+    if (enemy.isStatue) {
+      desc = t('inspect.statue');
+    } else if (enemy.isCity) {
+      desc = t('inspect.city');
+    } else if (enemy.pieceType === PieceType.GENERAL) {
+      desc = aliveGuards > 0
+        ? t('inspect.generalShielded', { n: aliveGuards })
+        : t('inspect.generalExposed');
+    } else if (this.isRoyalGuardUnit(enemy)) {
+      desc = `${PIECE_LABELS[enemy.pieceType] ?? ''} · ${t('inspect.royalGuard')}`;
+    } else {
+      desc = `${PIECE_LABELS[enemy.pieceType] ?? ''} · ${t('inspect.regular')}`;
+    }
+
+    document.getElementById('enemy-inspect-tip')?.remove();
+    const tip = document.createElement('div');
+    tip.id = 'enemy-inspect-tip';
+    tip.className = 'enemy-inspect-tip';
+    tip.textContent = desc;
+    tip.addEventListener('click', () => this.clearEnemyInspect());
+    document.body.appendChild(tip);
+    return true;
+  }
+
+  private cleanupHandDrag(): void {
+    if (this.handDragCleanup) {
+      this.handDragCleanup();
+      this.handDragCleanup = null;
+    }
+    this.isTouchPlacing = false;
+    this.activeTouchTarget = null;
+    this.activeLockedTarget = null;
+    this.intersectionRenderer.clearReticle();
+    this.intersectionRenderer.clearSkillPreview();
+  }
+
+  /** 从手牌区直接按下并拖入棋盘瞄准，抬手即落子 */
+  private handleHandDragStart(handIdx: number, startX: number, startY: number, pointerType: string): void {
+    if (this.isAnimating) return;
+    this.cleanupHandDrag();
+
+    const isTouch = pointerType !== 'mouse';
+    let dragStartedBoard = false;
+
+    const onMove = (ev: PointerEvent) => {
+      if (this.isAnimating) {
+        this.cleanupHandDrag();
+        renderNow();
+        return;
+      }
+      const aim = this.getAimCoords(ev.clientX, ev.clientY, isTouch);
+      if (!dragStartedBoard) {
+        const moved = Math.hypot(ev.clientX - startX, ev.clientY - startY);
+        if (moved < 10 || aim.y >= Layout.boardBottom) return;
+        this.onHandSelect(handIdx);
+        if (this.turnManager.phase !== GamePhase.PLACE_PIECE) {
+          this.cleanupHandDrag();
+          return;
+        }
+        dragStartedBoard = true;
+        this.isTouchPlacing = true;
+      }
+
+      if (aim.y >= Layout.boardBottom) {
+        this.activeTouchTarget = null;
+        this.activeLockedTarget = null;
+        this.intersectionRenderer.clearReticle();
+        this.intersectionRenderer.clearSkillPreview();
+        renderNow();
+        return;
+      }
+
+      const mag = screenToLogicalMagnetic(aim.x, aim.y, this.activeLockedTarget);
+      if (mag) {
+        this.activeTouchTarget = mag.point;
+        this.activeLockedTarget = mag.isLocked ? mag.point : null;
+        const validPoints = this.turnManager.getValidPlacements();
+        const isValid = validPoints.some(vp => vp.col === mag.point.col && vp.row === mag.point.row);
+        this.intersectionRenderer.showReticle(mag.point.col, mag.point.row, aim.x, aim.y, isValid, mag.isLocked, isTouch);
+        this.updatePlacementPreview(mag.point.col, mag.point.row, isValid);
+      } else {
+        this.activeTouchTarget = null;
+        this.activeLockedTarget = null;
+        this.intersectionRenderer.clearReticle();
+        this.intersectionRenderer.clearSkillPreview();
+      }
+      renderNow();
+    };
+
+    const onEnd = (ev: PointerEvent) => {
+      const target = this.activeTouchTarget;
+      const aim = this.getAimCoords(ev.clientX, ev.clientY, isTouch);
+      const shouldPlace = ev.type === 'pointerup' && dragStartedBoard && !!target && aim.y < Layout.boardBottom;
+      this.cleanupHandDrag();
+      renderNow();
+      if (shouldPlace && target) {
+        this.doPlacePiece(target.col, target.row, aim.x, aim.y);
+      }
+    };
+
+    window.addEventListener('pointermove', onMove, { passive: true });
+    window.addEventListener('pointerup', onEnd);
+    window.addEventListener('pointercancel', onEnd);
+    this.handDragCleanup = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onEnd);
+      window.removeEventListener('pointercancel', onEnd);
+    };
+  }
+
   private onPointerDown(event: any): void {
     if (this.isAnimating) return;
     // Reject clicks in the hand/quick-bar area
     if (event.global.y >= Layout.boardBottom) return;
-    const point = screenToLogical(event.global.x, event.global.y);
+
+    // 优先采用磁吸计算（支持 39px 范围内的磁吸吸附落子）
+    const mag = screenToLogicalMagnetic(event.global.x, event.global.y, this.activeLockedTarget);
+    const point = mag ? mag.point : screenToLogical(event.global.x, event.global.y);
     if (!point) return;
     // 调试：URL 带 debug=1 时，点击棋子打印其完整参数（unit + 引擎 UnitSpec 属性）
     if (DEBUG_PIECE_CLICK) {
@@ -1061,23 +1439,41 @@ export class GameScene {
       const u = this.turnManager.board.getUnitAt(point.col, point.row);
       if (u && u.camp === Camp.PLAYER) {
         const removedId = u.id;
+        this.clearEnemyInspect();
         this.intersectionRenderer.removeSkillRange(removedId);
         this.turnManager.removePlaced(removedId);
         const idx = this.turnManager.hand.findIndex(h => h.id === removedId);
         if (idx >= 0) this.turnManager.selectHand(idx);
         this.refreshUI(); return;
       }
+      if (this.inspectEnemyAt(point.col, point.row)) {
+        return;
+      }
     }
     if (this.turnManager.phase === GamePhase.PLACE_PIECE) {
       if (event.pointerType === 'touch') {
-        this.isTouchPlacing = true;
-        this.activeTouchTarget = point;
-        const validPoints = this.turnManager.getValidPlacements();
-        const isValid = validPoints.some(vp => vp.col === point.col && vp.row === point.row);
-        this.intersectionRenderer.showReticle(point.col, point.row, event.global.x, event.global.y, isValid);
-        renderNow();
+        const aim = this.getAimCoords(event.global.x, event.global.y, true);
+        if (aim.y >= Layout.boardBottom) return;
+        const mag = screenToLogicalMagnetic(aim.x, aim.y, this.activeLockedTarget);
+        if (mag) {
+          this.isTouchPlacing = true;
+          this.activeTouchTarget = mag.point;
+          this.activeLockedTarget = mag.isLocked ? mag.point : null;
+          const validPoints = this.turnManager.getValidPlacements();
+          const isValid = validPoints.some(vp => vp.col === mag.point.col && vp.row === mag.point.row);
+          this.intersectionRenderer.showReticle(mag.point.col, mag.point.row, aim.x, aim.y, isValid, mag.isLocked, true);
+          this.updatePlacementPreview(mag.point.col, mag.point.row, isValid);
+          renderNow();
+        }
       } else {
-        this.doPlacePiece(point.col, point.row);
+        const mag = screenToLogicalMagnetic(event.global.x, event.global.y, this.activeLockedTarget);
+        const target = mag ? mag.point : point;
+        if (target) {
+          this.intersectionRenderer.clearReticle();
+          this.intersectionRenderer.clearSkillPreview();
+          this.intersectionRenderer.clearHover();
+          this.doPlacePiece(target.col, target.row, event.global.x, event.global.y);
+        }
       }
     }
   }
@@ -1085,26 +1481,63 @@ export class GameScene {
   private onPointerMove(event: any): void {
     if (this.isAnimating) return;
     if (this.isTouchPlacing) {
-      if (event.global.y >= Layout.boardBottom) {
+      const aim = this.getAimCoords(event.global.x, event.global.y, true);
+      if (aim.y >= Layout.boardBottom) {
         this.activeTouchTarget = null;
+        this.activeLockedTarget = null;
         this.intersectionRenderer.clearReticle();
+        this.intersectionRenderer.clearSkillPreview();
         renderNow();
         return;
       }
-      const point = screenToLogical(event.global.x, event.global.y);
-      this.activeTouchTarget = point;
-      if (point) {
+      const mag = screenToLogicalMagnetic(aim.x, aim.y, this.activeLockedTarget);
+      if (mag) {
+        this.activeTouchTarget = mag.point;
+        this.activeLockedTarget = mag.isLocked ? mag.point : null;
         const validPoints = this.turnManager.getValidPlacements();
-        const isValid = validPoints.some(vp => vp.col === point.col && vp.row === point.row);
-        this.intersectionRenderer.showReticle(point.col, point.row, event.global.x, event.global.y, isValid);
+        const isValid = validPoints.some(vp => vp.col === mag.point.col && vp.row === mag.point.row);
+        this.intersectionRenderer.showReticle(mag.point.col, mag.point.row, aim.x, aim.y, isValid, mag.isLocked, true);
+        this.updatePlacementPreview(mag.point.col, mag.point.row, isValid);
       } else {
+        this.activeTouchTarget = null;
+        this.activeLockedTarget = null;
         this.intersectionRenderer.clearReticle();
+        this.intersectionRenderer.clearSkillPreview();
       }
       renderNow();
       return;
     }
     // Reject hover below board area
-    if (event.global.y >= Layout.boardBottom) { this.intersectionRenderer.clearHover(); renderNow(); return; }
+    if (event.global.y >= Layout.boardBottom) {
+      this.intersectionRenderer.clearHover();
+      this.intersectionRenderer.clearReticle();
+      this.intersectionRenderer.clearSkillPreview();
+      renderNow();
+      return;
+    }
+
+    // 桌面端鼠标在落子阶段（已选手牌）移入棋盘时，同样触发磁吸对齐瞄准框与实时击杀预览
+    if (this.turnManager.phase === GamePhase.PLACE_PIECE) {
+      const mag = screenToLogicalMagnetic(event.global.x, event.global.y, this.activeLockedTarget);
+      if (mag) {
+        this.activeLockedTarget = mag.isLocked ? mag.point : null;
+        this.activeTouchTarget = mag.point;
+        const validPoints = this.turnManager.getValidPlacements();
+        const isValid = validPoints.some(vp => vp.col === mag.point.col && vp.row === mag.point.row);
+        this.intersectionRenderer.clearHover();
+        this.intersectionRenderer.showReticle(mag.point.col, mag.point.row, event.global.x, event.global.y, isValid, mag.isLocked, false);
+        this.updatePlacementPreview(mag.point.col, mag.point.row, isValid);
+      } else {
+        this.activeLockedTarget = null;
+        this.activeTouchTarget = null;
+        this.intersectionRenderer.clearReticle();
+        this.intersectionRenderer.clearSkillPreview();
+        this.intersectionRenderer.clearHover();
+      }
+      renderNow();
+      return;
+    }
+
     const point = screenToLogical(event.global.x, event.global.y);
     if (point) this.intersectionRenderer.showHover(point.col, point.row);
     else this.intersectionRenderer.clearHover();
@@ -1115,14 +1548,20 @@ export class GameScene {
   private onPointerUp(event: any): void {
     if (this.isAnimating) return;
     if (!this.isTouchPlacing) return;
+    const isTouch = event.pointerType === 'touch';
+    const aim = this.getAimCoords(event.global.x, event.global.y, isTouch);
     this.isTouchPlacing = false;
+    this.activeLockedTarget = null;
     this.intersectionRenderer.clearReticle();
+    this.intersectionRenderer.clearSkillPreview();
     renderNow();
 
-    if (this.activeTouchTarget && event.global.y < Layout.boardBottom) {
+    if (this.activeTouchTarget && aim.y < Layout.boardBottom) {
       const target = this.activeTouchTarget;
       this.activeTouchTarget = null;
-      this.doPlacePiece(target.col, target.row);
+      this.doPlacePiece(target.col, target.row, aim.x, aim.y);
+    } else {
+      this.activeTouchTarget = null;
     }
   }
 
@@ -1265,6 +1704,9 @@ export class GameScene {
 
   private onConfirm(): void {
     if (this.isAnimating || !this.turnManager.canConfirm()) return;
+    this.clearEnemyInspect();
+    this.turnKillTypes = [];
+    this.turnTriggeredClassicCallout = false;
     this.turnStats.endTurn();
     // R2：confirm 前 snapshot 引擎聚合分，用于按类别拆分本回合每步得分（引擎权威）
     const prevDetails = {
@@ -1273,8 +1715,10 @@ export class GameScene {
       statue: this.turnManager.statueScore,
       ally: this.turnManager.allyLostPenalty,
     };
+    const prevStorm = this.turnManager.stormCharge;
     const prevScore = this.turnManager.score;
     const steps = this.turnManager.confirm();
+    const enemyKillsThisTurn = steps.reduce((acc, s) => acc + s.targets.filter(t => t.eid).length, 0);
     this.isAnimating = true;
     // 引擎已结算本回合：turnManager.score 为权威新值；animScore 从旧值起步，飘分按类别增量累加
     this.prevTurnScore = prevScore;
@@ -1329,22 +1773,25 @@ export class GameScene {
       this.intersectionRenderer.clearAll();
       const spawns = this.turnManager.afterResolve();
       this.animatingStormCharge = null;  // 回退到引擎权威值（消耗后的剩余）
+      const stormRewarded = this.turnManager.gameResult === GameResult.NONE
+        && (prevStorm + enemyKillsThisTurn >= this.turnManager.MAX_STORM_CHARGE)
+        && (this.turnManager.stormCharge < prevStorm + enemyKillsThisTurn);
       const flames = [...this.turnManager.consumedFlames];
       const soulCount = this.turnManager.loongSoulsCollectedThisGame;
-      // 结算后顺序（与引擎 after_resolve 一致）：招兵买马 → 龙魂 → 风暴
+      // 结算后顺序（与引擎 after_resolve 一致）：招兵买马 → 龙魂（非阻塞飞行） → 风暴
       const afterRecruit = () => {
+        if (stormRewarded) {
+          this.ui.showToast(t('toast.stormHero'), 2.5);
+        }
         if (flames.length > 0) {
+          // 龙魂飞行不阻塞下一回合操控，光球飞抵后刷新灯笼
           this.playSoulFlight(flames, () => {
             this.ui.setSessionEarnedLoongSouls(soulCount);
             this.loongLamp.setCount(this.getDisplayedLoongSoulCount());
             this.loongLamp.pulseArrival();
-            if (spawns.length > 0) {
-              this.playStormSpawnEffects(spawns, finishTurn);
-            } else {
-              finishTurn();
-            }
           });
-        } else if (spawns.length > 0) {
+        }
+        if (spawns.length > 0) {
           this.playStormSpawnEffects(spawns, finishTurn);
         } else {
           finishTurn();
@@ -1441,7 +1888,6 @@ export class GameScene {
       return;
     }
 
-    const pieceType = (step.playerPieceIndex >= 0 && step.playerPieceIndex < this.turnManager.placed.length) ? this.turnManager.placed[step.playerPieceIndex].pieceType : PieceType.PAWN;
     if (step.playerPieceIndex >= 0) {
       const piece = this.turnManager.placed[step.playerPieceIndex];
       if (piece) {
@@ -1452,6 +1898,14 @@ export class GameScene {
         }
       }
     }
+
+    // 空击步（0 目标）：不浪费前摇/空挥时长，直接跳过到下一步
+    if (!isKingsMeeting && !isLoongPiece && step.targets.length === 0) {
+      this.playStepResolve(idx + 1, steps, onComplete);
+      return;
+    }
+
+    const pieceType = (step.playerPieceIndex >= 0 && step.playerPieceIndex < this.turnManager.placed.length) ? this.turnManager.placed[step.playerPieceIndex].pieceType : PieceType.PAWN;
     // 棋子发射音在 cast 时刻（炮车开火等）
     const audio = AudioManager.getInstance();
     if (pieceType === PieceType.CANNON) audio.play('cannonFire');
@@ -1481,6 +1935,28 @@ export class GameScene {
       this.haptic(isFinalKill ? 18 : 8);
       if (isFinalKill) audio.duckBgm();
       this.showBonusTitle(step, pieceType);
+      if (thisStepKills) {
+        this.turnKillTypes.push(pieceType);
+        if (!this.turnTriggeredClassicCallout) {
+          const hasCannon = this.turnKillTypes.includes(PieceType.CANNON);
+          const hasHorse = this.turnKillTypes.some(pt => pt === PieceType.HORSE || pt === PieceType.HORSE_IRON);
+          const cannonCount = this.turnKillTypes.filter(pt => pt === PieceType.CANNON).length;
+          const chariotCount = this.turnKillTypes.filter(pt => pt === PieceType.CHARIOT || pt === PieceType.CHARIOT_TANK).length;
+          let classicKey = '';
+          if (hasCannon && hasHorse) classicKey = 'callout.horseCannon';
+          else if (cannonCount >= 2) classicKey = 'callout.doubleCannon';
+          else if (chariotCount >= 2) classicKey = 'callout.twinChariots';
+          if (classicKey) {
+            this.turnTriggeredClassicCallout = true;
+            this.lastVictoryCallout = t(classicKey);
+            this.showTitleDirectly(classicKey, -1, 1400);
+          }
+        }
+      }
+      if (killedGeneral) {
+        this.lastVictoryCallout = t('bonusKingslayer');
+        this.showTitleDirectly('bonus_kingslayer', 1500);
+      }
     };
     this.effectPlayer.playSteps(this.previewLayer, [step], [pieceType], () => {
       this.effectPlayer.onStepClimax = null;
@@ -1519,7 +1995,6 @@ export class GameScene {
     if (step.playerPieceIndex < 0) return null;
 
     const enemyKills = step.targets.filter(t => t.eid).length;
-    const totalElim = step.targets.length;
 
     switch (pieceType) {
       case PieceType.CANNON:
@@ -1527,19 +2002,22 @@ export class GameScene {
         if (enemyKills >= 3) return { bonusKey: 'bonus_cannon', score: 100 };
         break;
       case PieceType.HORSE:
+      case PieceType.HORSE_IRON:
         if (enemyKills >= 7) return { bonusKey: 'bonus_horse_t3', score: 500 };
         if (enemyKills >= 4) return { bonusKey: 'bonus_horse_t2', score: 300 };
         if (enemyKills >= 2) return { bonusKey: 'bonus_horse', score: 150 };
         break;
       case PieceType.CHARIOT:
-        if (enemyKills >= 5) return { bonusKey: 'bonus_chariot_t2', score: 400 };
-        if (enemyKills >= 3) return { bonusKey: 'bonus_chariot_t1', score: 200 };
+      case PieceType.CHARIOT_TANK:
+        if (enemyKills >= 4) return { bonusKey: 'bonus_chariot_t2', score: 300 };
+        if (enemyKills >= 2) return { bonusKey: 'bonus_chariot_t1', score: 150 };
         break;
       case PieceType.ELEPHANT:
-        if (totalElim >= 1) return { bonusKey: 'bonus_elephant', score: 80 };
+      case PieceType.ELEPHANT_MENMA:
+        if (enemyKills >= 1) return { bonusKey: 'bonus_elephant', score: 80 };
         break;
       case PieceType.GENERAL:
-        if (totalElim > 0) return { bonusKey: 'bonus_general', score: 150 };
+        if (enemyKills > 0) return { bonusKey: 'bonus_general', score: 150 };
         break;
     }
     return null;
@@ -1557,6 +2035,7 @@ export class GameScene {
       bonus_chariot_t2: 'bonusChariotT2',
       bonus_elephant: 'bonusElephant',
       bonus_general: 'bonusGeneral',
+      bonus_kingslayer: 'bonusKingslayer',
       bonus_kings_meeting: 'bonusKingsMeeting',
       victory_kings_meeting: 'victoryKingsMeeting',
       victory_normal: 'victoryNormal',
@@ -1840,10 +2319,10 @@ export class GameScene {
     const pieceScale = (Layout.pieceRadius * 2 - 3) / 64;
     const tl = gsap.timeline({ onComplete });
 
-    // 技能提示
-    this.showTitleDirectly('skill_recruit', -1, 2400);
+    // 技能提示（压缩至 1.2s）
+    this.showTitleDirectly('skill_recruit', -1, 1200);
 
-    // 敌将前摇：晃动（无渲染容器时跳过晃动，仅用逻辑坐标作光线起点）
+    // 敌将前摇：快速晃动 (~0.18s)
     const gen = this.turnManager.enemyUnits.find(u => u.pieceType === PieceType.GENERAL);
     const genWrapper = gen ? this.pieceRenderer.getContainer(gen.id) : undefined;
     const genPos = genWrapper
@@ -1853,15 +2332,14 @@ export class GameScene {
         : { x: 0, y: 0 };
     if (genWrapper) {
       const origRot = genWrapper.rotation;
-      tl.to(genWrapper, { rotation: -0.07, duration: 0.08, ease: 'sine.inOut' }, 0);
-      tl.to(genWrapper, { rotation: 0.07, duration: 0.12, ease: 'sine.inOut' }, 0.08);
-      tl.to(genWrapper, { rotation: -0.05, duration: 0.1, ease: 'sine.inOut' }, 0.2);
-      tl.to(genWrapper, { rotation: origRot, duration: 0.08, ease: 'sine.inOut' }, 0.3);
+      tl.to(genWrapper, { rotation: -0.07, duration: 0.05, ease: 'sine.inOut' }, 0);
+      tl.to(genWrapper, { rotation: 0.07, duration: 0.06, ease: 'sine.inOut' }, 0.05);
+      tl.to(genWrapper, { rotation: origRot, duration: 0.06, ease: 'sine.inOut' }, 0.11);
     }
 
-    // 分射光线：头部从敌将射出，飞行中拉长到上限后整线飞向源单位，命中处闪光
-    const BEAM_START = 0.34;
-    const BEAM_DUR = 0.18;
+    // 分射光线：同时射向源单位（0.12s 到达）
+    const BEAM_START = 0.16;
+    const BEAM_DUR = 0.12;
     const BEAM_MAX_LEN = 46;
     for (let i = 0; i < spawns.length; i++) {
       const src = logicalToScreen(spawns[i].srcCol, spawns[i].srcRow);
@@ -1873,12 +2351,11 @@ export class GameScene {
       beam.addChild(line);
       beam.rotation = Math.atan2(dy, dx);
       this.previewLayer.addChild(beam);
-      const beamAt = BEAM_START + i * 0.06;
+      const beamAt = BEAM_START + i * 0.03;
       const state = { t: 0 };
       tl.to(state, {
         t: 1, duration: BEAM_DUR, ease: 'power2.in',
         onUpdate: () => {
-          // 头部沿连线前进；线长 = min(头部已飞距离, 上限)，超过后整线平移
           const headX = genPos.x + dx * state.t;
           const headY = genPos.y + dy * state.t;
           const dist = Math.hypot(headX - genPos.x, headY - genPos.y);
@@ -1892,9 +2369,9 @@ export class GameScene {
         },
       }, beamAt);
       tl.to(beam, {
-        alpha: 0, duration: 0.1, ease: 'power1.out',
+        alpha: 0, duration: 0.06, ease: 'power1.out',
         onComplete: () => { beam.removeFromParent(); beam.destroy(); },
-      }, beamAt + BEAM_DUR + 0.02);
+      }, beamAt + BEAM_DUR);
 
       // 命中闪光（源单位）
       const hit = new Graphics().circle(0, 0, 7).fill({ color: 0xffd700, alpha: 0.65 });
@@ -1902,18 +2379,18 @@ export class GameScene {
       hit.y = src.y;
       hit.scale.set(0);
       this.previewLayer.addChild(hit);
-      tl.to(hit, { scale: 1.8, alpha: 0, duration: 0.28, ease: 'power2.out',
+      tl.to(hit, { scale: 1.7, alpha: 0, duration: 0.16, ease: 'power2.out',
         onComplete: () => { hit.removeFromParent(); hit.destroy(); } },
-        beamAt + BEAM_DUR - 0.02);
+        beamAt + BEAM_DUR - 0.01);
     }
 
-    // 复制动效：光线全部命中后才开始，每个源单位依次执行（保持 0.85s 错峰）
-    const FLY_START = BEAM_START + BEAM_DUR + (spawns.length - 1) * 0.06 + 0.18;
-    let offset = FLY_START;
-    for (const sp of spawns) {
+    // 并行同步飞行 (~0.75s 总耗时)：多个复制棋子近乎同时起飞落定
+    const FLY_START = BEAM_START + BEAM_DUR;
+    for (let i = 0; i < spawns.length; i++) {
+      const sp = spawns[i];
+      const offset = FLY_START + i * 0.06;
       const src = logicalToScreen(sp.srcCol, sp.srcRow);
       const dst = logicalToScreen(sp.col, sp.row);
-      // 复制一份"字"：敌方棋子图标（无图标时退回"棋"字）
       const tex = getPieceIconTexture(wasmToTsPiece(sp.type as WasmPieceType), false);
       const ghost: Sprite | Text = tex
         ? new Sprite(tex)
@@ -1930,13 +2407,13 @@ export class GameScene {
       ghost.y = src.y;
       ghost.alpha = 0;
       this.previewLayer.addChild(ghost);
-      audio.play('storm-spawn');
+      if (i === 0) audio.play('storm-spawn');
 
-      // 上浮 → 飞向落点 → 落定消散；消散同时真实棋子立即出现在落点（scale-in）
-      tl.to(ghost, { alpha: 1, y: src.y - 36, duration: 0.3, ease: 'power2.out' }, offset);
-      tl.to(ghost, { x: dst.x, y: dst.y, duration: 0.6, ease: 'power2.inOut' }, offset + 0.3);
-      tl.to(ghost, { alpha: 0, scale: pieceScale * 0.8, duration: 0.18, ease: 'power1.in',
-        onComplete: () => { ghost.removeFromParent(); ghost.destroy(); } }, offset + 0.9);
+      // 上浮 (0.12s) → 飞向落点 (0.28s) → 落定消散 (0.10s)
+      tl.to(ghost, { alpha: 1, y: src.y - 26, duration: 0.12, ease: 'power2.out' }, offset);
+      tl.to(ghost, { x: dst.x, y: dst.y, duration: 0.28, ease: 'power2.inOut' }, offset + 0.12);
+      tl.to(ghost, { alpha: 0, scale: pieceScale * 0.8, duration: 0.10, ease: 'power1.in',
+        onComplete: () => { ghost.removeFromParent(); ghost.destroy(); } }, offset + 0.40);
       tl.add(() => {
         const unit = this.turnManager.enemyUnits.find(
           u => u.position?.col === sp.col && u.position?.row === sp.row);
@@ -1944,9 +2421,9 @@ export class GameScene {
         const w = this.pieceRenderer.addPiece(unit);
         if (w) {
           w.scale.set(0.5);
-          gsap.to(w.scale, { x: 1, y: 1, duration: 0.2, ease: 'back.out' });
+          gsap.to(w.scale, { x: 1, y: 1, duration: 0.14, ease: 'back.out' });
         }
-      }, offset + 0.9);
+      }, offset + 0.40);
 
       // 落点金色闪光
       const flash = new Graphics().circle(0, 0, 8).fill({ color: 0xffd700, alpha: 0.55 });
@@ -1954,10 +2431,8 @@ export class GameScene {
       flash.y = dst.y;
       flash.scale.set(0);
       this.previewLayer.addChild(flash);
-      tl.to(flash, { scale: 2.2, alpha: 0, duration: 0.35, ease: 'power2.out',
-        onComplete: () => { flash.removeFromParent(); flash.destroy(); } }, offset + 0.75);
-
-      offset += 0.85;
+      tl.to(flash, { scale: 2.0, alpha: 0, duration: 0.20, ease: 'power2.out',
+        onComplete: () => { flash.removeFromParent(); flash.destroy(); } }, offset + 0.36);
     }
   }
 
@@ -2069,6 +2544,8 @@ export class GameScene {
     tl.to(ring, { width: 200, height: 200, alpha: 0, duration: 0.6, ease: 'power3.out',
       onComplete: () => { this.loongFlameLayer.removeChild(ring); ring.destroy(); }
     }, 0.2);
+    // 瞬态局部冲击波（若环境不支持则静默降级为零效果）
+    playTransientShockwave(this.loongFlameLayer, this.boardLayer, pos.x, pos.y, 0.25);
   }
 
   private showScorePop(col: number, row: number, eid: string): void {
@@ -2118,12 +2595,10 @@ export class GameScene {
     if (win && !skipRewards) { AudioManager.getInstance().play('victory'); SaveManager.save(this.currentLevel + 1, this.turnManager.score); SaveManager.saveMaxLevel(this.currentLevel); }
     const tm = this.turnManager;
     // ── 星星判据与最终分：引擎是唯一来源（含星奖励），TS 不再本地计算 ──
-    const stars: [boolean, boolean, boolean, boolean, boolean] = [
+    const stars: [boolean, boolean, boolean] = [
       (tm.starMask & 1) !== 0,
       (tm.starMask & 2) !== 0,
       (tm.starMask & 4) !== 0,
-      (tm.starMask & 8) !== 0,
-      (tm.starMask & 16) !== 0,
     ];
     const totalStars = tm.totalStars;
     const finalScore = tm.finalScore;
@@ -2187,8 +2662,16 @@ export class GameScene {
       }
       sealData = { tier: getCurrentSealTier(getAuthoritativeStar3Wins()).tier, promoted: sealPromoted };
     }
-    const data: SettlementData = { level: this.currentLevel, piecesScore: tm.piecesScore, cityScore: tm.cityScore, statueScore: tm.statueScore, allyLostPenalty: tm.allyLostPenalty, comboGain: tm.comboGain, starBonus: tm.starBonus, maxKillsPerStep: tm.maxKillsPerStep, bonusScores: [...tm.bonusScores], levelMultiplier: tm.levelMultiplier, finalScore, totalScore, turnCount: tm.turnCount + (win ? 1 : 0), wagonCount: Math.floor(tm.provisionsBonus / 5), win, stars, totalStars, seal: sealData };
+    const data: SettlementData = {
+      level: this.currentLevel, piecesScore: tm.piecesScore, cityScore: tm.cityScore, statueScore: tm.statueScore, allyLostPenalty: tm.allyLostPenalty, comboGain: tm.comboGain, starBonus: tm.starBonus, maxKillsPerStep: tm.maxKillsPerStep, bonusScores: [...tm.bonusScores], levelMultiplier: tm.levelMultiplier, finalScore, totalScore, turnCount: tm.turnCount + (win ? 1 : 0), wagonCount: Math.floor(tm.provisionsBonus / 5), win, stars, totalStars, seal: sealData,
+      dailyDate: this.dailyChallengeDate ?? undefined,
+      formationName: this.dailyChallengeDate ? undefined : (getFormationName(this.currentLevel) || undefined),
+      callout: this.lastVictoryCallout || undefined,
+    };
     if (win) {
+      if (!isReplay && this.dailyChallengeDate) {
+        DailyController.saveDailyChallengeResult(this.dailyChallengeDate, finalScore, totalStars, data.turnCount);
+      }
       if (!isReplay) {
         persistGameRecord(
           tm.recordPublishError,
@@ -2218,23 +2701,21 @@ export class GameScene {
         };
         this.ui.showVictory(data, onReplayAgain, onChallenge, onQuit, true);
       } else {
-        this.ui.showVictory(data, () => this.nextLevel(), () => this.restart(), onQuit);
-      }
-      if (!isReplay) {
-        // 宝箱三选一：胜利后延迟弹出
-        setTimeout(() => this.ui.showTreasureChest(this.currentLevel, data.finalScore, () => {}), 1200);
-        // FTUE: 首关胜利提示 + 标记完成
-        if (FtueController.isActiveForLevel(this.currentLevel)) FtueController.hintVictory();
-        // V1-015: 分享回放按钮 + V1-016: 挑战模式结果
-        if (this.challengeTargetScore !== null) {
-          const target = this.challengeTargetScore;
-          this.challengeTargetScore = null;
-          setTimeout(() => {
-            new ReplayController().showChallengeResult(finalScore, target, () => { this.cleanupScene(); this.start(); });
-          }, 1500);
-        } else {
-          setTimeout(() => this.ui.showToast(t('replay.shareBtn'), 3), 2000);
-        }
+        const showVictoryNow = () => {
+          this.ui.showVictory(data, () => this.nextLevel(), () => this.restart(), onQuit);
+          if (FtueController.isActiveForLevel(this.currentLevel)) FtueController.hintVictory();
+          if (this.challengeTargetScore !== null) {
+            const target = this.challengeTargetScore;
+            this.challengeTargetScore = null;
+            setTimeout(() => {
+              new ReplayController().showChallengeResult(finalScore, target, () => { this.cleanupScene(); this.start(); });
+            }, 600);
+          }
+        };
+        // 先弹宝箱三选一，领完奖励再展示完整结算成绩单（避免结算卡刚弹 1.2s 就被打断）
+        setTimeout(() => {
+          this.ui.showTreasureChest(this.currentLevel, data.finalScore, showVictoryNow);
+        }, 350);
       }
     } else {
       // Engine LOSE triggers: force_defeat（弹尽粮绝投降）或无可落子位置
@@ -2279,7 +2760,7 @@ export class GameScene {
   // ═══════════════════════════════════════════════════════════════════
 
   restart(): void { SaveManager.clearGameState(); this.cleanupScene(); void this.init(); }
-  private nextLevel(): void { SaveManager.clearGameState(); this.cleanupScene(); this.currentLevel++; SaveManager.save(this.currentLevel, this.turnManager.score); void this.init(); }
+  private nextLevel(): void { this.dailyChallengeDate = null; SaveManager.clearGameState(); this.cleanupScene(); this.currentLevel++; SaveManager.save(this.currentLevel, this.turnManager.score); void this.init(); }
 
   private syncServerGold(): void {
     const hash = SaveManager.getHash();
@@ -2292,6 +2773,8 @@ export class GameScene {
   }
 
   private cleanupScene(): void {
+    this.clearEnemyInspect();
+    this.cleanupHandDrag();
     // V1-015: Clean up replay state
     this.replayRunner?.destroy();
     this.replayRunner = null;
@@ -2326,6 +2809,7 @@ export class GameScene {
     if (this.boundOnResize) { window.removeEventListener('resize', this.boundOnResize); this.boundOnResize = null; }
     if (this._resizeTimer) { clearTimeout(this._resizeTimer); this._resizeTimer = null; }
     if (this.boundOnKeyDown) { window.removeEventListener('keydown', this.boundOnKeyDown); this.boundOnKeyDown = null; }
+    if (this.boundOnPieceStyleChange) { window.removeEventListener('piecestylechange', this.boundOnPieceStyleChange); this.boundOnPieceStyleChange = null; }
     this.currentThemeId = 'shatter';
     // Character textures are renderer-scoped immutable resources. Reuse the
     // original pool across level restarts instead of extracting/allocating a

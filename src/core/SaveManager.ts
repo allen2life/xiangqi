@@ -247,6 +247,24 @@ export class SaveManager {
     }
   }
 
+  /** 为无口令的访客自动生成并持久化本地身份（可随时在云端同步中绑定口令迁移） */
+  static ensureGuestIdentity(): { hash: string; nickname: string } {
+    const existing = this.readHash();
+    if (existing && existing.hash) {
+      if (!existing.nickname) {
+        const isEn = typeof document !== 'undefined' && document.documentElement?.lang === 'en';
+        existing.nickname = `${isEn ? 'Player' : '棋友'}${existing.hash.slice(0, 4).toUpperCase()}`;
+        this.writeHash(existing);
+      }
+      return { hash: existing.hash, nickname: existing.nickname };
+    }
+    const hash = this.generateHash();
+    const isEn = typeof document !== 'undefined' && document.documentElement?.lang === 'en';
+    const nickname = (existing?.nickname?.trim()) || `${isEn ? 'Player' : '棋友'}${hash.slice(0, 4).toUpperCase()}`;
+    this.writeHash({ hash, nickname });
+    return { hash, nickname };
+  }
+
   /** Persist an identity derived from the existing kouling UX before a ranked run starts. */
   static persistKoulingIdentity(kouling: string, nickname?: string): string {
     if (!this.isValidKouling(kouling)) {

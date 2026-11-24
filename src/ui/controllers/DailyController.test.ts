@@ -34,7 +34,7 @@ vi.mock('../utils/pieceIcons', () => ({
   itemIcon: vi.fn(),
 }));
 
-import { DailyController } from './DailyController';
+import { DailyController, dailyDateToSeed, computeDailyStreak } from './DailyController';
 import { walletGrant } from '../../cloud/api';
 import { engineBridge } from '../../wasm/EngineBridge';
 
@@ -188,6 +188,37 @@ describe('DailyController win streak', () => {
       }));
       const ctrl = new DailyController();
       expect(ctrl.hasPendingNotification()).toBe(true);
+    });
+  });
+
+  describe('Daily global challenge & streak calendar', () => {
+    it('dailyDateToSeed produces deterministic non-zero seeds per date', () => {
+      const a1 = dailyDateToSeed('2026-11-24');
+      const a2 = dailyDateToSeed('2026-11-24');
+      const b = dailyDateToSeed('2026-11-25');
+      expect(a1).toBe(a2);
+      expect(a1).not.toBe(b);
+      expect(a1).toBeGreaterThan(0);
+    });
+
+    it('computeDailyStreak counts consecutive cleared days up to today/yesterday', () => {
+      expect(computeDailyStreak(['2026-11-22', '2026-11-23', '2026-11-24'], '2026-11-24')).toBe(3);
+      expect(computeDailyStreak(['2026-11-21', '2026-11-23'], '2026-11-24')).toBe(1);
+      expect(computeDailyStreak(['2026-11-20'], '2026-11-24')).toBe(0);
+    });
+
+    it('saveDailyChallengeResult tracks best score and cleared dates', () => {
+      const today = new Date().toISOString().slice(0, 10);
+      DailyController.saveDailyChallengeResult(today, 3200, 2, 5);
+      DailyController.saveDailyChallengeResult(today, 2800, 1, 6);
+      const rec = DailyController.getDailyChallengeRecord(today);
+      expect(rec?.bestScore).toBe(3200);
+      expect(rec?.bestStars).toBe(2);
+      expect(DailyController.getDailyClearedDates()).toContain(today);
+      expect(DailyController.getDailyStreak(today)).toBe(1);
+      const text = DailyController.formatDailyShareText(today, 3200, 2, 5);
+      expect(text).toContain(today);
+      expect(text).toContain('3200');
     });
   });
 });

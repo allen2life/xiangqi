@@ -69,22 +69,22 @@ export const CHAR_SPIN = {
 
 // 错峰
 export const STAGGER = {
-  PER_TARGET_DELAY: 0.06,   // 多目标每个目标延迟秒数
-  PER_TARGET_MAX: 0.3,      // 累计上限
+  PER_TARGET_DELAY: 0.03,   // 多目标每个目标延迟秒数
+  PER_TARGET_MAX: 0.15,     // 累计上限
 };
 
 // 冲击 / hit-stop
 export const IMPACT = {
-  FLASH_DURATION: 0.06,      // impact frame 时长（秒）
+  FLASH_DURATION: 0.05,      // impact frame 时长（秒）
   FLASH_ALPHA: 0.55,
   TARGET_PUNCH_SCALE: 0.18,  // 目标棋子被击中后的弹放幅度
-  TARGET_PUNCH_DURATION: 0.18,
+  TARGET_PUNCH_DURATION: 0.14,
 };
 
 // hit-stop（每目标分量停顿）
 export const HIT_STOP = {
-  PER_TARGET: 0.05,   // 常规命中时间停顿
-  FINAL: 0.15,        // 终局击杀延长版
+  PER_TARGET: 0.03,   // 常规命中时间停顿
+  FINAL: 0.10,        // 终局击杀延长版
 };
 
 // 屏幕震动（按击杀链规模分档，链末单次触发）
@@ -131,10 +131,10 @@ export const EASE = {
 } as const;
 
 // 默认 fallback 配置（resolveDef 找不到时用）
-export const DEFAULT_CAST_DURATION = 0.25;
-export const DEFAULT_TRAVEL_DURATION = 0.3;
-export const DEFAULT_HIT_DURATION = 0.3;
-export const DEFAULT_DEFEAT_DURATION = 0.3;
+export const DEFAULT_CAST_DURATION = 0.14;
+export const DEFAULT_TRAVEL_DURATION = 0.16;
+export const DEFAULT_HIT_DURATION = 0.18;
+export const DEFAULT_DEFEAT_DURATION = 0.16;
 
 // ─── 王见王（Kings' Meeting）专属常量 ────────────────────────────
 export const KINGS_MEETING = {

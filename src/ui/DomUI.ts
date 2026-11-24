@@ -39,8 +39,13 @@ export class DomUI implements UIBridge {
   // Callback fields — set by GameScene, read by controllers via DomUIHost
   // ═══════════════════════════════════════════════════════════════
   onHandSelect: ((index: number) => void) | null = null;
+  onHandDragStart: ((index: number, clientX: number, clientY: number, pointerType: string) => void) | null = null;
   onPreviewClick: ((index: number) => void) | null = null;
   onConfirm: (() => void) | null = null;
+  onUndoPlacement: (() => void) | null = null;
+  onSkipTurn: (() => void) | null = null;
+  onDailyChallenge: (() => void) | null = null;
+  onCopyChallengeLink: (() => void) | null = null;
   onRestart: (() => void) | null = null;
   onMenu: (() => void) | null = null;
   onCloudSync: (() => void) | null = null;
@@ -83,8 +88,13 @@ export class DomUI implements UIBridge {
     // Build DomUIHost — wraps the callback fields so controllers read via host interface
     const host: DomUIContext['host'] = {
       get onHandSelect() { return this.onHandSelect; },
+      get onHandDragStart() { return this.onHandDragStart; },
       get onPreviewClick() { return this.onPreviewClick; },
       get onConfirm() { return this.onConfirm; },
+      get onUndoPlacement() { return this.onUndoPlacement; },
+      get onSkipTurn() { return this.onSkipTurn; },
+      get onDailyChallenge() { return this.onDailyChallenge; },
+      get onCopyChallengeLink() { return this.onCopyChallengeLink; },
       get onRestart() { return this.onRestart; },
       get onMenu() { return this.onMenu; },
       get onCloudSync() { return this.onCloudSync; },

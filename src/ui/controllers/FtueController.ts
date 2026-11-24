@@ -10,10 +10,9 @@ import { showToast } from '../utils/domHelpers';
 const FTUE_KEY = 'ftue_done';
 
 export class FtueController {
-  /** Returns true if FTUE should be shown (new player, not yet completed). */
+  /** Returns true if FTUE should be shown (skip blocking text wall; rely on subtle in-game toasts). */
   static isNeeded(): boolean {
-    if (localStorage.getItem(FTUE_KEY)) return false;
-    return SaveManager.getMaxLevel() === 0 && SaveManager.loadRecords().length === 0;
+    return false;
   }
 
   /** Mark FTUE as complete so it never re-triggers. */

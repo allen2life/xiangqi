@@ -5,10 +5,11 @@
 
 import { t } from '../../i18n';
 import { SaveManager } from '../../core/SaveManager';
-import { DailyController } from './DailyController';
+import { DailyController, getTodayDateStr } from './DailyController';
 import { FtueController } from './FtueController';
 import { formatBuildLabel } from '../../utils/buildInfo';
 import { SEAL_TIERS, getCurrentSealTier, getAuthoritativeStar3Wins } from '../sealDefs';
+import { getFormationName } from '../../config/levelMeta';
 import { engineBridge } from '../../wasm/EngineBridge';
 import type { DomUIContext } from '../DomUIContext';
 
@@ -66,6 +67,9 @@ export class StartMenuController {
     }
 
     const hasDailyNotice = this.daily.hasPendingNotification();
+    const today = getTodayDateStr();
+    const dailyRec = DailyController.getDailyChallengeRecord(today);
+    const dailyStreak = DailyController.getDailyStreak(today);
 
     el.innerHTML = `
       <div class="start-menu-card lobby-card">
@@ -118,6 +122,20 @@ export class StartMenuController {
               </div>
               <span class="hero-btn-glow"></span>
             </button>
+
+            <div class="lobby-daily-row">
+              <button class="lobby-daily-btn" id="btn-daily-challenge" type="button">
+                <div class="lobby-daily-left">
+                  <span class="sub-btn-icon">📅</span>
+                  <div>
+                    <div class="lobby-daily-title">${t('start.btnDailyChallenge')}${dailyStreak > 0 ? `<span class="daily-streak-pill">🔥 ${dailyStreak}</span>` : ''}</div>
+                    <div class="lobby-daily-sub">${dailyRec ? t('start.dailyDone', { stars: '★'.repeat(dailyRec.bestStars), score: String(dailyRec.bestScore) }) : t('start.dailySub', { date: today })}</div>
+                  </div>
+                </div>
+                ${dailyRec ? `<span class="daily-badge-done">${'★'.repeat(dailyRec.bestStars)}</span>` : '<span>▶</span>'}
+              </button>
+              <button class="lobby-daily-cal-btn" id="btn-daily-calendar" type="button" title="${t('daily.calTitle')}">🗓</button>
+            </div>
 
             <div class="lobby-sub-actions">
               <button class="lobby-sub-btn" id="btn-endless-ladder">
@@ -201,6 +219,12 @@ export class StartMenuController {
     document.getElementById('btn-new-game')!.addEventListener('click', () => {
       onStart(debug(), targetLevel, true);
     });
+    document.getElementById('btn-daily-challenge')?.addEventListener('click', () => {
+      this.ctx.host.onDailyChallenge?.();
+    });
+    document.getElementById('btn-daily-calendar')?.addEventListener('click', () => {
+      this.daily.showDailyCalendarModal(() => this.ctx.host.onDailyChallenge?.());
+    });
     document.getElementById('btn-endless-ladder')!.addEventListener('click', () => this.showEndlessLadder(onStart));
     document.getElementById('btn-level-select')!.addEventListener('click', () => this.showLevelSelect(onStart));
     document.getElementById('btn-cloud-sync')!.addEventListener('click', () => { this.ctx.host.onCloudSync?.(); });
@@ -241,7 +265,9 @@ export class StartMenuController {
         const starHtml = starCount > 0
           ? `<span class="level-cell-stars">${'★'.repeat(starCount)}</span>`
           : '';
-        rowHtml += `<button class="${cls}" data-level="${level}">${level}${starHtml}</button>`;
+        const fName = getFormationName(level);
+        const titleAttr = fName ? ` title="第${level}关 · ${fName}"` : '';
+        rowHtml += `<button class="${cls}" data-level="${level}"${titleAttr}>${level}${starHtml}</button>`;
       }
       rowHtml += '</div>';
       gridHtml += rowHtml;

@@ -59,9 +59,10 @@ export class BackpackController {
     }
     cardsHtml += '</div>';
 
+    const hasIdentity = SaveManager.hasHash();
     const isOnline = navigator.onLine;
-    const statusIcon = isOnline ? '🟢' : '🔴';
-    const statusText = isOnline ? t('bp.online') : t('bp.offline');
+    const statusIcon = hasIdentity ? (isOnline ? '🟢' : '🔴') : '🟡';
+    const statusText = hasIdentity ? (isOnline ? t('bp.online') : t('bp.offline')) : t('bp.guestLocal');
 
     overlay.innerHTML = `
       <div class="bp-card">
@@ -211,7 +212,24 @@ export class BackpackController {
           return;
         }
         const hash = SaveManager.getHash();
-        if (!hash) { showToast(t('item.syncFirst'), 2); return; }
+        if (!hash) {
+          const totalGold = qty * engineBridge.getItemPrice(itemId);
+          if (engineBridge.getPlatformGold() < totalGold) {
+            showToast(t('err.insufficient_coins'), 2);
+            return;
+          }
+          const ok = engineBridge.platformAcquireItem(itemId, qty);
+          if (ok !== 1) {
+            showToast(t('item.buyFailed'), 2);
+            return;
+          }
+          overlay.remove();
+          this.hideBackpack();
+          void this.showBackpack();
+          this.ctx.host.onBackpackItemsChanged?.(projectInventoryWithSessionSouls(this.ctx.state.inventory.items, this.ctx.state.sessionEarnedLoongSouls).loong_soul ?? 0);
+          showToast(t('item.forgeOk', { name: itemName(def) }), 1.5);
+          return;
+        }
         const operationKey = `forge:${hash}:${itemId}:${qty}`;
         confirmBtn.disabled = true;
         await this.runItemOp(operationKey, async () => {

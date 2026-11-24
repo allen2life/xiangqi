@@ -50,13 +50,19 @@ export interface SettlementData {
   wagonCount: number; // 本局使用木牛流马次数（★2 判据：0 即达成）
   win: boolean;
   // Star rating
-  stars: [boolean, boolean, boolean, boolean, boolean]; // ★1~★5
-  totalStars: number; // sum of achieved stars (0-5)
+  stars: [boolean, boolean, boolean]; // ★1~★3
+  totalStars: number; // sum of achieved stars (0-3)
   // 印章（debug 胜利时不传，SettlementController 不渲染）
   seal?: {
     tier: number;
     promoted: boolean;
   };
+  /** 每日全球同盘挑战日期 (YYYY-MM-DD) */
+  dailyDate?: string;
+  /** 本关经典阵法名称 */
+  formationName?: string;
+  /** 本局打出的高光象棋杀法称号 */
+  callout?: string;
 }
 
 export interface UIBridge {
@@ -97,8 +103,13 @@ export interface UIBridge {
   onRunPublished: (() => void) | null;
 
   onHandSelect: ((index: number) => void) | null;
+  onHandDragStart: ((index: number, clientX: number, clientY: number, pointerType: string) => void) | null;
   onPreviewClick: ((index: number) => void) | null;
   onConfirm: (() => void) | null;
+  onUndoPlacement: (() => void) | null;
+  onSkipTurn: (() => void) | null;
+  onDailyChallenge: (() => void) | null;
+  onCopyChallengeLink: (() => void) | null;
   onRestart: (() => void) | null;
   onMenu: (() => void) | null;
   onCloudSync: (() => void) | null;

@@ -7,7 +7,7 @@ describe('record binding field mapping', () => {
     issuedAt: Date.now() - 1_000,
     expiresAt: Date.now() + 60_000,
     levelId: 4,
-    rulesetId: 'xiangqiblast-v9-fullhand',
+    rulesetId: 'xiangqiblast-v10-casual5m',
   };
 
   it('maps server fields into saved binding and protocol-v4 publish fields', () => {
@@ -18,7 +18,7 @@ describe('record binding field mapping', () => {
       runNonce: 'ab'.repeat(32),
       recordProtocolVersion: 4,
       levelId: 4,
-      rulesetId: 'xiangqiblast-v9-fullhand',
+      rulesetId: 'xiangqiblast-v10-casual5m',
     });
   });
 

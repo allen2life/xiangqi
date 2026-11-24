@@ -210,6 +210,7 @@ describe('StartMenuController Chinese Classical Lobby', () => {
         onSealBookOpen: vi.fn(),
         onCloudSync: vi.fn(),
         onBackpackOpen: vi.fn(),
+        onDailyChallenge: vi.fn(),
       } as any,
     };
   });
@@ -326,5 +327,17 @@ describe('StartMenuController Chinese Classical Lobby', () => {
     }
 
     expect(debugToggle.classList.contains('hidden')).toBe(false);
+  });
+
+  it('renders Daily Global Challenge CTA and routes click to onDailyChallenge', () => {
+    const ctrl = new StartMenuController(ctx);
+    ctrl.showStartMenu(vi.fn());
+
+    const dailyBtn = container.querySelector('#btn-daily-challenge') as FakeElement | null;
+    expect(dailyBtn).not.toBeNull();
+    expect(container.querySelector('#btn-daily-calendar')).not.toBeNull();
+
+    dailyBtn!.click();
+    expect(ctx.host.onDailyChallenge).toHaveBeenCalled();
   });
 });

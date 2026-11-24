@@ -35,6 +35,7 @@ export const BONUS_NAMES: Record<string, string> = {
   bonus_chariot_t2: t('bonusChariotT2'),
   bonus_elephant: t('bonusElephant'),
   bonus_general: t('bonusGeneral'),
+  bonus_kingslayer: t('bonusKingslayer'),
   bonus_kings_meeting: t('bonusKingsMeeting'),
   bonus_stars: t('bonusStars'),
   victory_kings_meeting: t('victoryKingsMeeting'),

@@ -151,6 +151,23 @@ export class BoardRenderer {
     }
 
     // Apply stroke to grid lines
+    // Draw authentic Xiangqi star marks (兵/卒位与炮位十字星标)
+    if (nCols === 9 && nRows === 10) {
+      for (const [c, r] of [[1, 2], [7, 2], [1, 7], [7, 7], [2, 3], [4, 3], [6, 3], [2, 6], [4, 6], [6, 6]] as const) {
+        this.drawStarMark(c, r, true, true);
+      }
+      for (const [c, r] of [[0, 3], [0, 6]] as const) {
+        this.drawStarMark(c, r, false, true);
+      }
+      for (const [c, r] of [[8, 3], [8, 6]] as const) {
+        this.drawStarMark(c, r, true, false);
+      }
+    } else if (nCols >= 7 && nRows >= 7) {
+      for (const [c, r] of [[1, 2], [nCols - 2, 2], [1, nRows - 3], [nCols - 2, nRows - 3]] as const) {
+        this.drawStarMark(c, r, true, true);
+      }
+    }
+
     this.gridGfx.stroke({ width: 1.5, color: CONFIG.COLORS.GRID_LINE });
 
     // River gap horizontal separator (always between rows riverLine-1 and riverLine)
@@ -161,19 +178,19 @@ export class BoardRenderer {
         .fill({ color: 0x3e2723, alpha: 0.08 });
     }
 
-    // Loong-scale boundary text (龙鳞界) — only on boards with rows ≥ 9
+    // Loong-scale boundary / Chu-Han River calligraphy
     if (this.riverText) { this.riverText.removeFromParent(); this.riverText.destroy(); this.riverText = null; }
-    if (nRows >= 9) {
+    if (nRows >= 7) {
       const riverY = (logicalToScreen(0, riverLine - 1).y + logicalToScreen(0, riverLine).y) / 2;
       const riverX = logicalToScreen(0, 0).x + bw / 2;
       this.riverText = new Text({
         text: t('board.river'),
-        style: { fontSize: 18, fill: 0xb8956a, fontFamily: 'Noto Serif SC, serif' },
+        style: { fontSize: nRows >= 9 ? 18 : 14, fill: 0xb8956a, fontFamily: 'Noto Serif SC, serif' },
       });
       this.riverText.anchor.set(0.5);
       this.riverText.x = riverX;
       this.riverText.y = riverY;
-      this.riverText.alpha = 0.4;
+      this.riverText.alpha = 0.45;
       this.container.addChild(this.riverText);
     }
 
@@ -190,6 +207,20 @@ export class BoardRenderer {
     this.mottoText.y = mottoY;
     this.mottoText.alpha = 0.35;
     this.container.addChild(this.mottoText);
+  }
+
+  private drawStarMark(col: number, row: number, drawLeft: boolean, drawRight: boolean): void {
+    const pos = logicalToScreen(col, row);
+    const gap = 3.5;
+    const arm = 6.5;
+    if (drawLeft) {
+      this.gridGfx.moveTo(pos.x - gap - arm, pos.y - gap).lineTo(pos.x - gap, pos.y - gap).lineTo(pos.x - gap, pos.y - gap - arm);
+      this.gridGfx.moveTo(pos.x - gap - arm, pos.y + gap).lineTo(pos.x - gap, pos.y + gap).lineTo(pos.x - gap, pos.y + gap + arm);
+    }
+    if (drawRight) {
+      this.gridGfx.moveTo(pos.x + gap + arm, pos.y - gap).lineTo(pos.x + gap, pos.y - gap).lineTo(pos.x + gap, pos.y - gap - arm);
+      this.gridGfx.moveTo(pos.x + gap + arm, pos.y + gap).lineTo(pos.x + gap, pos.y + gap).lineTo(pos.x + gap, pos.y + gap + arm);
+    }
   }
 
   destroy(): void {

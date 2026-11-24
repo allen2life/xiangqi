@@ -4,13 +4,13 @@
  */
 
 import { t } from '../../i18n';
-import { SaveManager } from '../../core/SaveManager';
 import { ITEM_DEFS } from '../../config';
 import { createKeyedInFlightGuard } from '../../core/itemTransaction';
 import { showToast } from '../utils/domHelpers';
 import { resolveIconSrc } from '../../utils/iconAssetCache';
-import { itemName, itemIcon, PIECE_LABELS, pieceIconTag } from '../utils/pieceIcons';
+import { itemName, itemIcon, PIECE_LABELS, pieceIconTag, pieceDirGlyph, getPieceIconMode, type PieceIconMode } from '../utils/pieceIcons';
 import { readLocalInventory, projectInventoryWithSessionSouls } from '../utils/inventory';
+import { getBattleSpeed, setBattleSpeed, onBattleSpeedChange } from '../../utils/battleSpeed';
 import type { DomUIContext } from '../DomUIContext';
 import type { HUDData, PieceInfo } from '../UIBridge';
 
@@ -24,22 +24,41 @@ export class HudController {
   /** R5: 手牌 diff 更新——持久化每个棋子 DOM 元素，避免整块 innerHTML 重建 */
   private _handEls = new Map<string, HTMLButtonElement>();
   private _confirmBtn: HTMLButtonElement | null = null;
+  private _undoBtn: HTMLButtonElement | null = null;
+  private _skipBtn: HTMLButtonElement | null = null;
+  private _unsubSpeed: (() => void) | null = null;
   private _handHeaderDebug = false;
+  private _iconMode: PieceIconMode = getPieceIconMode();
 
   constructor(private ctx: DomUIContext) {}
 
   buildHUD(): void {
     const el = document.getElementById('ui-hud')!;
     el.className = 'ui-panel glass-panel lc-card lc-hud';
+    const speedLabel = `${getBattleSpeed()}x`;
     el.innerHTML = `
       <div class="hud-lamp-slot" id="hud-lamp-slot"></div>
       <div class="hud-stat level-stat"><span class="hud-label">${t('hud.level')}</span><span class="hud-value level">1</span></div>
       <div class="hud-stat score-stat"><span class="hud-label">${t('hud.score')}</span><span class="hud-value score">0</span></div>
       <div class="hud-stat enemy-stat"><span class="hud-label">${t('hud.enemy')}</span><span class="hud-value enemy">0</span></div>
       <div class="hud-stat provisions-stat"><span class="hud-label">${t('hud.provisionsLabel')}</span><span class="hud-value provisions">0/0</span></div>
+      <button class="speed-toggle-btn" id="speed-toggle-btn" type="button" title="${t('settings.speed')}">${speedLabel}</button>
       <button class="gear-btn" id="gear-btn" title="${t('hud.settings')}">⚙</button>
       <div class="storm-bar-outer"><div class="storm-bar-inner" style="width:0%"></div></div>
     `;
+    const speedBtn = document.getElementById('speed-toggle-btn');
+    if (speedBtn) {
+      speedBtn.addEventListener('click', () => {
+        const next = getBattleSpeed() >= 2 ? 1 : 2;
+        setBattleSpeed(next);
+      });
+      this._unsubSpeed?.();
+      this._unsubSpeed = onBattleSpeedChange((s) => {
+        speedBtn.textContent = `${s}x`;
+        speedBtn.classList.toggle('fast', s > 1);
+      });
+      speedBtn.classList.toggle('fast', getBattleSpeed() > 1);
+    }
   }
 
   buildQuickBar(): void {
@@ -63,6 +82,10 @@ export class HudController {
     this.ctx.state.turnPieceOrder = [];
     this._handEls.clear();
     this._confirmBtn = null;
+    this._undoBtn = null;
+    this._skipBtn = null;
+    this._unsubSpeed?.();
+    this._unsubSpeed = null;
     this._handHeaderDebug = false;
   }
 
@@ -95,12 +118,18 @@ export class HudController {
     if (onDice) this.ctx.state.onDiceClick = onDice;
   }
 
-  updateHand(hand: PieceInfo[], selectedIndex: number, placed: PieceInfo[], summonedThisTurn = false): void {
+  updateHand(hand: PieceInfo[], selectedIndex: number, placed: PieceInfo[], _summonedThisTurn = false): void {
     const el = document.getElementById('ui-hand');
     if (!el) return;
-    // 全落子门控：3 张手牌全部放置才能确定出牌；召唤英雄后 3+1=4 张
-    const required = 3 + (summonedThisTurn ? 1 : 0);
-    const canConfirm = placed.length >= required;
+    const modeNow = getPieceIconMode();
+    if (modeNow !== this._iconMode) {
+      this._iconMode = modeNow;
+      this._handEls.forEach(node => node.remove());
+      this._handEls.clear();
+    }
+    // 自由出牌门控（与引擎 confirm_turn 一致）：至少放置 1 枚棋子即可确定出牌
+    const canConfirm = placed.length >= 1;
+    const canSkip = placed.length === 0 && hand.length > 0 && !!this.ctx.host.onSkipTurn;
 
     // ── Header（debug 骰子）：仅在 debugMode 切换时重建 ──
     this.ensureHandHeader(el);
@@ -119,6 +148,7 @@ export class HudController {
       this._handEls.forEach(node => node.remove());
       this._handEls.clear();
       if (this._confirmBtn) this._confirmBtn.classList.add('hidden');
+      if (this._skipBtn) this._skipBtn.classList.add('hidden');
       return;
     }
 
@@ -127,11 +157,13 @@ export class HudController {
     placed.forEach((p, i) => pieceById.set(p.id, { ...p, isPlaced: true, placedIdx: i }));
 
     const container = this.ensureHandContainer(el);
-    // 确认按钮始终位于末尾（作为隐式锚点）；先创建以保证棋子插在其前
+    // 确认按钮与撤回按钮位于右侧；跳过按钮位于左侧
+    this.ensureSkipBtn(container, canSkip);
+    this.ensureUndoBtn(container, placed.length >= 1 && !!this.ctx.host.onUndoPlacement);
     this.ensureConfirmBtn(container, canConfirm);
 
     // ── Diff：复用/创建/重排，仅状态变化时更新 class 与 data 属性 ──
-    let prev: Element | null = null;
+    let prev: Element | null = this._skipBtn;
     for (const id of this.ctx.state.turnPieceOrder) {
       const p = pieceById.get(id);
       if (!p) continue;
@@ -182,6 +214,8 @@ export class HudController {
       el.appendChild(container);
       this._handEls.clear();
       this._confirmBtn = null;
+      this._undoBtn = null;
+      this._skipBtn = null;
     }
     return container;
   }
@@ -197,6 +231,34 @@ export class HudController {
     btn.type = 'button';
     btn.dataset.pieceId = p.id;
     this.applyHandPieceState(btn, p, hand, selectedIndex);
+    let lpTimer: ReturnType<typeof setTimeout> | null = null;
+    let lpStartX = 0;
+    let lpStartY = 0;
+    const clearLongPress = () => {
+      if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+    };
+
+    btn.addEventListener('pointerdown', (e) => {
+      if (btn.classList.contains('placed')) return;
+      if (e.button !== undefined && e.button !== 0 && e.pointerType === 'mouse') return;
+      const idx = parseInt(btn.dataset.handIdx || '0', 10);
+      lpStartX = e.clientX;
+      lpStartY = e.clientY;
+      clearLongPress();
+      lpTimer = setTimeout(() => {
+        lpTimer = null;
+        this.showHandPieceTip(p);
+      }, 420);
+      this.ctx.host.onHandDragStart?.(idx, e.clientX, e.clientY, e.pointerType || 'touch');
+    });
+    btn.addEventListener('pointermove', (e) => {
+      if (lpTimer && Math.hypot(e.clientX - lpStartX, e.clientY - lpStartY) > 8) {
+        clearLongPress();
+      }
+    });
+    btn.addEventListener('pointerup', clearLongPress);
+    btn.addEventListener('pointercancel', clearLongPress);
+    btn.addEventListener('pointerleave', clearLongPress);
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       if (btn.classList.contains('placed')) {
@@ -238,9 +300,12 @@ export class HudController {
       if (wasPlaced || !hasPieceText) {
         // placed → hand（悔棋）或首次创建：重建为纯棋子内容
         btn.classList.remove('placed');
-        // 左下角粮草成本角标（0 消耗棋子如英雄/龙棋不显示）
+        // 左下角粮草成本角标（0 消耗棋子如英雄/龙棋不显示）+ 右上角攻击形态微标
         const cost = p.provisionCost && p.provisionCost > 0 ? p.provisionCost : 0;
-        btn.innerHTML = cost > 0 ? `${iconHtml}<span class="hand-cost">${cost}</span>` : iconHtml;
+        const glyph = pieceDirGlyph(p.pieceType);
+        const dirHtml = glyph ? `<span class="hand-dir-glyph" aria-hidden="true">${glyph}</span>` : '';
+        const costHtml = cost > 0 ? `<span class="hand-cost">${cost}</span>` : '';
+        btn.innerHTML = `${iconHtml}${dirHtml}${costHtml}`;
       }
       const handIdx = hand.findIndex(h => h.id === p.id);
       btn.classList.toggle('selected', handIdx === selectedIndex);
@@ -248,6 +313,23 @@ export class HudController {
       btn.dataset.handIdx = String(handIdx);
       btn.removeAttribute('data-placed-idx');
     }
+  }
+
+  /** 跳过本回合按钮复用同一元素 */
+  private ensureSkipBtn(container: HTMLElement, canSkip: boolean): HTMLButtonElement {
+    if (!this._skipBtn || !this._skipBtn.isConnected) {
+      const btn = document.createElement('button');
+      btn.id = 'btn-skip';
+      btn.type = 'button';
+      btn.className = 'skip-inline-btn hidden';
+      btn.title = t('hand.skip');
+      btn.textContent = t('hand.skip');
+      btn.addEventListener('click', (e) => { e.stopPropagation(); this.ctx.host.onSkipTurn?.(); });
+      container.insertBefore(btn, container.firstChild);
+      this._skipBtn = btn;
+    }
+    this._skipBtn.classList.toggle('hidden', !canSkip);
+    return this._skipBtn;
   }
 
   /** 确认按钮复用同一元素，仅切换 hidden 类 */
@@ -264,6 +346,36 @@ export class HudController {
     }
     this._confirmBtn.classList.toggle('hidden', !canConfirm);
     return this._confirmBtn;
+  }
+
+  /** 快捷撤回上一步按钮 */
+  private ensureUndoBtn(container: HTMLElement, canUndo: boolean): HTMLButtonElement {
+    if (!this._undoBtn || !this._undoBtn.isConnected) {
+      const btn = document.createElement('button');
+      btn.id = 'btn-undo-inline';
+      btn.type = 'button';
+      btn.className = 'undo-inline-btn hidden';
+      btn.title = t('hand.undo');
+      btn.textContent = '↩';
+      btn.addEventListener('click', (e) => { e.stopPropagation(); this.ctx.host.onUndoPlacement?.(); });
+      container.appendChild(btn);
+      this._undoBtn = btn;
+    }
+    this._undoBtn.classList.toggle('hidden', !canUndo);
+    return this._undoBtn;
+  }
+
+  private showHandPieceTip(p: PieceInfo): void {
+    const label = PIECE_LABELS[p.pieceType] ?? p.pieceType;
+    const cost = p.provisionCost ?? 0;
+    let detailKey = 'hand.tipArmorBasic';
+    if (p.pieceType === 'cannon') detailKey = 'hand.tipCannon';
+    else if (p.pieceType === 'chariot' || p.pieceType === 'elephant') detailKey = 'hand.tipArmorBreaker';
+    else if (p.pieceType === 'general') detailKey = 'hand.tipGeneral';
+    else if (cost === 0 || p.pieceType === 'loong_piece' || p.pieceType === 'horse_iron' || p.pieceType === 'elephant_mengma' || p.pieceType === 'chariot_tank' || p.pieceType === 'pawn_engineer') {
+      detailKey = 'hand.tipHero';
+    }
+    this.showQuickBarTip(`${label} · ${p.skillName} | ${t(detailKey, { cost })}`, 3);
   }
 
   syncLocalInventory(): void {
@@ -340,11 +452,6 @@ export class HudController {
 
     bar.classList.remove('hidden');
     const items = this.projectInventory(this.ctx.state.inventory.items);
-
-    if (!SaveManager.getHash()) {
-      scrollEl.innerHTML = '';
-      return;
-    }
 
     if (this._quickBarSlotOrder.length === 0) {
       this._quickBarSlotOrder = Object.keys(items).filter(id => id !== 'loong_soul' && (items[id] ?? 0) > 0);

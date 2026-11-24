@@ -9,6 +9,7 @@ import type {
 import { type EffectTheme, validateTheme } from './EffectTheme';
 import { EffectRenderer } from './EffectRenderer';
 import { CharacterShatterPool } from './CharacterShatterPool';
+import { playTransientShockwave } from './ShockwaveHelper';
 import {
   IMPACT, HIT_STOP, COMBO_SHAKE, VIGNETTE, SCREEN_FLASH, SLOW_MO,
   STAGGER, CHAR_SPIN, SHATTER, TRAVEL, RING, EASE,
@@ -917,6 +918,9 @@ export class SkillEffectPlayer {
       layer.addChild(ring);
       tl.to(ring, { scale: 2, alpha: 0, duration: def.duration, ease: EASE.POWER2_OUT,
         onComplete: () => { layer.removeChild(ring); ring.destroy(); } }, startAt);
+      tl.call(() => {
+        playTransientShockwave(layer, layer, pos.x, pos.y, Math.min(0.25, def.duration));
+      }, [], startAt);
     },
     mist: (def, ctx) => {
       const { tl, layer, pos, startAt, secondary } = ctx;

@@ -9,7 +9,8 @@ import { SEAL_TIERS } from '../sealDefs';
 import { ITEM_DEFS } from '../../config';
 import { engineBridge } from '../../wasm/EngineBridge';
 import { itemName } from '../utils/pieceIcons';
-import { showToast } from '../utils/domHelpers';
+import { showToast, copyToClipboard } from '../utils/domHelpers';
+import { DailyController } from './DailyController';
 import type { DomUIContext } from '../DomUIContext';
 import type { SettlementData } from '../UIBridge';
 
@@ -25,8 +26,9 @@ const CHEST_ITEM_POOL = ['undo', 'redraw', 'unseal', 'provision_wagon'];
 function rollChestReward(level: number, combatScore: number): ChestReward {
   const r = Math.random();
   if (r < 0.05) {
-    // 5% 概率：战斗积分 ×2（额外发放等额金币）
-    return { kind: 'multiplier', value: 2, bonusGold: combatScore };
+    // 5% 概率：暴击金币奖励（封顶 400，避免高分关通胀失控）
+    const bonusGold = Math.min(400, Math.max(120, Math.round(combatScore * 0.08)));
+    return { kind: 'multiplier', value: 2, bonusGold };
   } else if (r < 0.50) {
     // 金币：50 + level*10，封顶 200
     return { kind: 'gold', amount: Math.min(200, 50 + level * 10) };
@@ -61,7 +63,7 @@ function deliverReward(r: ChestReward): void {
 }
 
 /** 星奖励阶梯（与引擎 ScoreConst::STAR_SCORES 一致） */
-const STAR_REWARDS = [500, 1000, 2000, 4000, 5000];
+const STAR_REWARDS = [500, 1000, 2000];
 
 export class SettlementController {
   constructor(private ctx: DomUIContext) {}
@@ -106,9 +108,9 @@ export class SettlementController {
     }
 
     // ── Star rating: merged into condition cells (★ replaces ✓/✗) ──
-    const STAR_NAMES = [t('star.name1'), t('star.name2'), t('star.name3'), t('star.name4'), t('star.name5')];
-    const STAR_CONDS = [t('star.cond1'), t('star.cond2'), t('star.cond3'), t('star.cond4'), t('star.cond5')];
-    const fullStars = data.totalStars === 5;
+    const STAR_NAMES = [t('star.name1'), t('star.name2'), t('star.name3')];
+    const STAR_CONDS = [t('star.cond1'), t('star.cond2'), t('star.cond3')];
+    const fullStars = data.totalStars === 3;
     // Each cell pops in with its star; stagger 180ms per star, starting after card entrance
     const starConditions = data.stars.map((s, i) => {
       const delay = (0.3 + i * 0.18).toFixed(2);
@@ -124,7 +126,7 @@ export class SettlementController {
       <div class="${cardCls}">
         ${fullStars ? '<div class="star-rays" aria-hidden="true"></div><div class="star-burst" aria-hidden="true"></div>' : ''}
         <div class="victory-header stagger-item" style="animation-delay:0.05s">
-          <div class="victory-level-tag">${t('victory.levelTag', { level: data.level })}</div>
+          <div class="victory-level-tag">${data.dailyDate ? t('daily.levelTag', { date: data.dailyDate }) : `${t('victory.levelTag', { level: data.level })}${data.formationName ? ` · ${data.formationName}` : ''}`}</div>
           <div class="victory-score-block">
             <span class="victory-score-label">${t('settlement.levelScore')}</span>
             <span class="victory-title victory-score">${data.finalScore}</span>
@@ -146,13 +148,18 @@ export class SettlementController {
             ? `<button class="victory-btn-text replay-again" id="btn-replay-again">${t('replay.again')}</button>
                <button class="victory-btn-text challenge-this" id="btn-challenge-this">${t('replay.challenge')}</button>
                <button class="victory-btn-icon menu" id="btn-menu" title="${t('btn.menu')}">⌂</button>`
-            : `<button class="victory-btn-icon retry" id="btn-retry" title="${t('btn.retry')}">↻</button>
-               <button class="victory-btn-text next" id="btn-next">${t('btn.nextLevel')}</button>
-               <button class="victory-btn-icon menu" id="btn-menu" title="${t('btn.menu')}">⌂</button>`
+            : data.dailyDate
+              ? `<button class="victory-btn-icon retry" id="btn-retry" title="${t('btn.retry')}">↻</button>
+                 <button class="victory-btn-text next" id="btn-daily-copy">${t('daily.copyBtn')}</button>
+                 <button class="victory-btn-icon menu" id="btn-menu" title="${t('btn.menu')}">⌂</button>`
+              : `<button class="victory-btn-icon retry" id="btn-retry" title="${t('btn.retry')}">↻</button>
+                 <button class="victory-btn-text next" id="btn-next">${t('btn.nextLevel')}</button>
+                 <button class="victory-btn-icon menu" id="btn-menu" title="${t('btn.menu')}">⌂</button>`
           }
         </div>
         ${replayMode ? '' : `<div class="victory-publish-row stagger-item" style="animation-delay:0.34s">
           <button class="victory-btn-text share" id="btn-victory-share">${t('victory.btnShare')}</button>
+          <button class="victory-btn-text challenge-this" id="btn-victory-invite">${t('victory.btnInvite')}</button>
           <button class="victory-btn-text rank" id="btn-victory-rank">${t('victory.btnRank')}</button>
           <button class="victory-btn-text publish" id="btn-victory-publish">${t('victory.btnPublish')}</button>
         </div>`}
@@ -178,16 +185,19 @@ export class SettlementController {
       document.getElementById('btn-replay-again')!.addEventListener('click', () => { this.hideVictory(); onNext(); });
       document.getElementById('btn-challenge-this')!.addEventListener('click', () => { this.hideVictory(); onRestart(); });
     } else {
-      document.getElementById('btn-next')!.addEventListener('click', () => { this.hideVictory(); onNext(); });
+      document.getElementById('btn-next')?.addEventListener('click', () => { this.hideVictory(); onNext(); });
+      document.getElementById('btn-daily-copy')?.addEventListener('click', async () => {
+        if (!data.dailyDate) return;
+        const summary = DailyController.formatDailyShareText(data.dailyDate, data.finalScore, data.totalStars, data.turnCount);
+        const ok = await copyToClipboard(summary);
+        showToast(ok ? t('daily.copied') : t('replay.copyFail'), 2.2);
+      });
       document.getElementById('btn-retry')!.addEventListener('click', () => { this.hideVictory(); onRestart(); });
       document.getElementById('btn-victory-publish')!.addEventListener('click', () => {
-        if (data.level <= 3) {
-          this.ctx.host.onShowPublishHint?.();
-        } else {
-          this.ctx.host.onShowPublishPanel?.();
-        }
+        this.ctx.host.onShowPublishPanel?.();
       });
       document.getElementById('btn-victory-rank')!.addEventListener('click', () => { this.hideVictory(); this.ctx.host.onLeaderboardCurrentLevel?.(); });
+      document.getElementById('btn-victory-invite')?.addEventListener('click', () => { this.ctx.host.onCopyChallengeLink?.(); });
       document.getElementById('btn-victory-share')!.addEventListener('click', () => { this.ctx.host.onShareReplay?.(); });
     }
   }
@@ -276,14 +286,14 @@ export class SettlementController {
             revealArea.innerHTML = `<div class="chest-reveal-text${isBig ? ' chest-reveal-big' : ''}">${rewardLabel(reward)}</div>`;
           }
 
-          // Phase 3: 爆裂动效（500ms）结束后，选中箱子放大 1.5× 突出
+          // Phase 3: 爆裂动效结束后，选中箱子放大突出
           setTimeout(() => {
             openedBox.classList.add('highlighted');
-          }, 500);
+          }, 250);
 
           const skipBtn = overlay.querySelector('.chest-skip') as HTMLButtonElement;
           skipBtn.textContent = t('chest.continue');
-        }, 600);
+        }, 280);
       });
     });
   }
@@ -296,13 +306,11 @@ export class SettlementController {
     const cond = t(`star.cond${index + 1}`);
     let valueRow = '';
     if (index === 1) {
-      valueRow = `<div class="star-detail-value">${t('star.curWagon', { cur: data.wagonCount })}</div>`;
+      valueRow = `<div class="star-detail-value">${t('star.curRestraint', { wagon: data.wagonCount, ally: data.allyLostPenalty })}</div>`;
     } else if (index === 2) {
-      // 与引擎 finalize_result 口径一致：排除 victory_ 与 bonus_stars
+      // 与引擎 finalize_result 口径一致：≤6回合 / ≥2战术奖励 / 单步≥4杀任一达成
       const combatCount = data.bonusScores.filter(b => !b.name.startsWith('victory_') && b.name !== 'bonus_stars').length;
-      valueRow = `<div class="star-detail-value">${t('star.curBonus', { cur: combatCount, need: 5 })}</div>`; // 阈值与引擎 COMBO_BONUS_THRESHOLD 一致
-    } else if (index === 4) {
-      valueRow = `<div class="star-detail-value">${t('star.curKills', { cur: data.maxKillsPerStep, need: 8 })}</div>`; // 阈值与引擎 MASS_KILL_THRESHOLD 一致
+      valueRow = `<div class="star-detail-value">${t('star.curTactical', { turns: data.turnCount, bonus: combatCount, kills: data.maxKillsPerStep })}</div>`;
     }
 
     const overlay = document.createElement('div');

@@ -31,6 +31,13 @@ interface DailyTask {
   reward: { gold?: number; item?: string; qty?: number };
 }
 
+interface DailyChallengeRecord {
+  date: string;
+  bestScore: number;
+  bestStars: number;
+  turns: number;
+}
+
 interface DailyState {
   date: string;           // YYYY-MM-DD of last activity
   signInDay: number;      // 0-6, current position in 7-day cycle
@@ -38,6 +45,9 @@ interface DailyState {
   tasks: DailyTask[];
   winStreak: number;                  // consecutive wins (reset on defeat)
   claimedStreakMilestones: number[];  // milestone thresholds already claimed this cycle
+  dailyChallenge?: DailyChallengeRecord;
+  dailyStreak?: number;
+  dailyClearedDates?: string[];
 }
 
 // 连胜奖励梯度：达到 threshold 连胜时发放，每个里程碑每轮只领一次
@@ -48,8 +58,24 @@ const STREAK_MILESTONES: { threshold: number; reward: { gold?: number; item?: st
   { threshold: 10, reward: { gold: 500 } },
 ];
 
-function todayStr(): string {
+export function getTodayDateStr(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/** 根据 YYYY-MM-DD 日期生成全球统一的 32 位正整数种子（FNV-1a） */
+export function dailyDateToSeed(dateStr: string): number {
+  const input = `xiangqiblast-daily:${dateStr}`;
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  const u = hash >>> 0;
+  return u === 0 ? 1 : u;
+}
+
+function todayStr(): string {
+  return getTodayDateStr();
 }
 
 function defaultTasks(): DailyTask[] {
@@ -58,6 +84,24 @@ function defaultTasks(): DailyTask[] {
     { id: 'useItem', target: 2, progress: 0, claimed: false, reward: { gold: 100 } },
     { id: 'stars', target: 5, progress: 0, claimed: false, reward: { item: 'loong_soul', qty: 2 } },
   ];
+}
+
+function addDays(dateStr: string, delta: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + delta));
+  return dt.toISOString().slice(0, 10);
+}
+
+/** 计算截至今日（若今日未完成则从昨日起算）连续完成每日一盘的天数 */
+export function computeDailyStreak(dates: string[], today = getTodayDateStr()): number {
+  const set = new Set(dates);
+  let cursor = set.has(today) ? today : addDays(today, -1);
+  let count = 0;
+  while (set.has(cursor)) {
+    count++;
+    cursor = addDays(cursor, -1);
+  }
+  return count;
 }
 
 function readState(): DailyState {
@@ -140,6 +184,64 @@ function rewardText(r: { gold?: number; item?: string; qty?: number }): string {
 }
 
 export class DailyController {
+  /** 获取指定日期（默认今日）的每日一盘战绩 */
+  static getDailyChallengeRecord(dateStr = getTodayDateStr()): DailyChallengeRecord | null {
+    const s = readState();
+    if (s.dailyChallenge && s.dailyChallenge.date === dateStr) {
+      return s.dailyChallenge;
+    }
+    return null;
+  }
+
+  /** 获取当前每日一盘连续打卡天数 */
+  static getDailyStreak(today = getTodayDateStr()): number {
+    try {
+      if (typeof localStorage === 'undefined') return 0;
+      const s = readState();
+      return computeDailyStreak(s.dailyClearedDates ?? [], today);
+    } catch { return 0; }
+  }
+
+  /** 获取已打卡通关的每日一盘日期列表 */
+  static getDailyClearedDates(): string[] {
+    try {
+      if (typeof localStorage === 'undefined') return [];
+      return [...(readState().dailyClearedDates ?? [])];
+    } catch { return []; }
+  }
+
+  /** 记录每日一盘挑战最高成绩，并累加每日连续打卡记录 */
+  static saveDailyChallengeResult(dateStr: string, score: number, stars: number, turns: number): void {
+    const s = readState();
+    const prev = s.dailyChallenge && s.dailyChallenge.date === dateStr ? s.dailyChallenge : null;
+    const cleared = new Set(s.dailyClearedDates ?? []);
+    cleared.add(dateStr);
+    const sortedCleared = [...cleared].sort().slice(-62);
+    s.dailyClearedDates = sortedCleared;
+    s.dailyStreak = computeDailyStreak(sortedCleared, getTodayDateStr());
+    if (!prev || score > prev.bestScore || stars > prev.bestStars) {
+      s.dailyChallenge = {
+        date: dateStr,
+        bestScore: prev ? Math.max(prev.bestScore, score) : score,
+        bestStars: prev ? Math.max(prev.bestStars, stars) : stars,
+        turns: prev && score <= prev.bestScore ? prev.turns : turns,
+      };
+    }
+    writeState(s);
+  }
+
+  /** 生成可一键复制分享的轻量 Emoji 战报 */
+  static formatDailyShareText(dateStr: string, score: number, stars: number, turns: number): string {
+    const starBar = '⭐'.repeat(Math.max(0, Math.min(3, stars))) + '☆'.repeat(Math.max(0, 3 - stars));
+    const baseUrl = typeof window !== 'undefined'
+      ? `${window.location.origin}${window.location.pathname}?daily=${dateStr}`
+      : `?daily=${dateStr}`;
+    const isZh = typeof document !== 'undefined' && document.documentElement.lang !== 'en';
+    return isZh
+      ? `🐉 龙魂象棋·每日一盘 ${dateStr}\n${starBar} | ${score} 分 | ${turns} 回合通关\n${baseUrl}`
+      : `🐉 XiangqiBlast Daily ${dateStr}\n${starBar} | ${score} pts | ${turns} turns\n${baseUrl}`;
+  }
+
   /** Check-in: track level completion for daily task */
   static trackLevelComplete(): void {
     const s = readState();
@@ -311,6 +413,49 @@ export class DailyController {
         overlay.remove();
         this.showTaskPanel(); // Refresh
       });
+    });
+  }
+
+  /** 每日一盘本月打卡日历弹窗 */
+  showDailyCalendarModal(onPlayToday?: () => void): void {
+    document.getElementById('daily-calendar-overlay')?.remove();
+    const today = getTodayDateStr();
+    const [year, month] = today.split('-').map(Number);
+    const clearedSet = new Set(DailyController.getDailyClearedDates());
+    const streak = DailyController.getDailyStreak(today);
+
+    const firstDay = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    let cells = '';
+    for (let i = 0; i < firstDay; i++) {
+      cells += '<div class="daily-cal-cell empty"></div>';
+    }
+    for (let d = 1; d <= daysInMonth; d++) {
+      const ds = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      const isToday = ds === today;
+      const isCleared = clearedSet.has(ds);
+      const cls = `daily-cal-cell${isToday ? ' today' : ''}${isCleared ? ' cleared' : ''}`;
+      cells += `<div class="${cls}"><span>${d}</span>${isCleared ? '<span>★</span>' : ''}</div>`;
+    }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'ui-panel overlay';
+    overlay.id = 'daily-calendar-overlay';
+    overlay.innerHTML = `
+      <div class="daily-cal-card">
+        <div class="daily-cal-title">📅 ${t('daily.calTitle')} (${year}-${String(month).padStart(2, '0')})</div>
+        <div class="daily-cal-streak">${t('daily.streakDays', { n: String(streak) })}</div>
+        <div class="daily-cal-grid">${cells}</div>
+        ${onPlayToday ? `<button class="signin-claim-btn" id="daily-cal-play">${t('daily.playToday')}</button>` : ''}
+        <button class="signin-skip" id="daily-cal-close">${t('publish.done')}</button>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    overlay.querySelector('#daily-cal-close')!.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    overlay.querySelector('#daily-cal-play')?.addEventListener('click', () => {
+      overlay.remove();
+      onPlayToday?.();
     });
   }
 }

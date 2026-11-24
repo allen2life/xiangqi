@@ -5,6 +5,7 @@ import { logicalToScreen } from '../utils/coord';
 import { Camp, PieceType } from '../core/types';
 import { Layout } from '../ui/Layout';
 import { fetchIconBlobUrl } from '../utils/iconAssetCache';
+import { getPieceIconMode, PIECE_INTL_GLYPHS, PIECE_LABELS } from '../ui/utils/pieceIcons';
 
 const iconUrl = (name: string) => `${import.meta.env.BASE_URL}icons/${encodeURIComponent(name)}`;
 
@@ -72,6 +73,52 @@ export function getPieceIconTexture(pieceType: PieceType, isPlayer: boolean): Te
 }
 
 const obstacleTextureCache = new Map<string, Texture>();
+const intlTextureCache = new Map<string, Texture>();
+
+/** 国际图形模式：渲染高辨识度矢量武器/棋子徽章 + 角落汉字水印 */
+function getIntlPieceTexture(pieceType: PieceType, isPlayer: boolean, size: number): Texture {
+  const key = `${pieceType}_${isPlayer ? '1' : '0'}_${size}`;
+  const cached = intlTextureCache.get(key);
+  if (cached) return cached;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return Texture.WHITE;
+
+  const glyph = PIECE_INTL_GLYPHS[pieceType] ?? '♟';
+  const hanzi = PIECE_LABELS[pieceType] ?? '';
+  ctx.save();
+  ctx.translate(size / 2, size / 2);
+
+  // Subtle metallic backing glow
+  ctx.beginPath();
+  ctx.arc(0, 0, size * 0.34, 0, Math.PI * 2);
+  ctx.fillStyle = isPlayer ? 'rgba(246, 201, 69, 0.14)' : 'rgba(255, 110, 110, 0.14)';
+  ctx.fill();
+
+  // Main international emblem
+  ctx.font = `700 ${Math.round(size * 0.48)}px "Segoe UI Symbol", "Apple Color Emoji", Arial, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = isPlayer ? '#ffe8a3' : '#f5ede0';
+  ctx.fillText(glyph, 0, -size * 0.02);
+
+  // Subtle Hanzi cultural watermark in bottom-left
+  if (hanzi) {
+    ctx.font = `700 ${Math.max(10, Math.round(size * 0.2))}px STKaiti, KaiTi, serif`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = isPlayer ? 'rgba(255, 226, 138, 0.72)' : 'rgba(255, 230, 210, 0.68)';
+    ctx.fillText(hanzi, -size * 0.3, size * 0.34);
+  }
+  ctx.restore();
+
+  const tex = Texture.from(canvas);
+  intlTextureCache.set(key, tex);
+  return tex;
+}
 
 /** Procedural vector canvas texture for City (Fortress Gate) and Statue (Ancient Stone Beast) */
 function getObstacleTexture(type: 'city' | 'statue', active: boolean, size: number): Texture {
@@ -277,6 +324,13 @@ export class PieceRenderer {
       const fillColor = isPlayer ? PLAYER_FILL : ENEMY_FILL;
       const strokeColor = isPlayer ? PLAYER_STROKE : ENEMY_STROKE;
 
+      // 敌将护盾光环：有御前护卫存活时显示青色护盾外圈
+      if (!isPlayer && (unit as any).isShielded) {
+        gfx.circle(0, 0, r + 6)
+          .fill({ color: 0x00e5ff, alpha: 0.14 })
+          .stroke({ width: 2.5, color: 0x00e5ff, alpha: 0.9 });
+      }
+
       // Shadow (offset)
       gfx.circle(3, 3, r + 1)
         .fill({ color: 0x000000, alpha: 0.3 });
@@ -292,12 +346,20 @@ export class PieceRenderer {
         .fill({ color: 0xffffff, alpha: 0.12 });
       wrapper.addChild(gfx);
 
-      // ── Piece icon ──
-      const tex = getIcon(unit.pieceType as PieceType, isPlayer);
+      // ── Piece icon (respects intl emblem vs classic Hanzi mode) ──
+      const useIntl = getPieceIconMode() === 'intl';
+      const tex = useIntl
+        ? getIntlPieceTexture(unit.pieceType as PieceType, isPlayer, Math.max(64, Math.round(r * 2.2)))
+        : getIcon(unit.pieceType as PieceType, isPlayer);
       if (tex) {
         const sprite = new Sprite(tex);
         sprite.anchor.set(0.5);
-        sprite.scale.set((r * 2 - 3) / 64);
+        if (useIntl) {
+          sprite.width = r * 2 - 4;
+          sprite.height = r * 2 - 4;
+        } else {
+          sprite.scale.set((r * 2 - 3) / 64);
+        }
         sprite.alpha = unit.active ? 1 : 0.5;
         wrapper.addChild(sprite);
       } else {
@@ -313,6 +375,32 @@ export class PieceRenderer {
         fallback.anchor.set(0.5);
         fallback.alpha = unit.active ? 1 : 0.5;
         wrapper.addChild(fallback);
+      }
+
+      // 敌将护盾角标 & 御前护卫角标
+      if (!isPlayer && (unit as any).isShielded) {
+        const badge = new Container();
+        const bg = new Graphics();
+        bg.circle(0, 0, 8.5).fill({ color: 0x092430, alpha: 0.95 }).stroke({ width: 1.5, color: 0x00e5ff });
+        const txt = new Text({ text: '🛡', style: { fontSize: 10 } });
+        txt.anchor.set(0.5);
+        badge.addChild(bg, txt);
+        badge.x = r * 0.68;
+        badge.y = -r * 0.68;
+        wrapper.addChild(badge);
+      } else if (!isPlayer && (unit as any).isRoyalGuard) {
+        const guardBadge = new Container();
+        const bg = new Graphics();
+        bg.circle(0, 0, 7).fill({ color: 0x102836, alpha: 0.95 }).stroke({ width: 1.5, color: 0x4deeea });
+        const txt = new Text({
+          text: '卫',
+          style: { fontSize: 8.5, fill: 0x9ef7f7, fontWeight: '700', fontFamily: 'Arial, sans-serif' },
+        });
+        txt.anchor.set(0.5);
+        guardBadge.addChild(bg, txt);
+        guardBadge.x = r * 0.65;
+        guardBadge.y = r * 0.65;
+        wrapper.addChild(guardBadge);
       }
     }
 

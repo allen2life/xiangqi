@@ -6,7 +6,7 @@ export type SoundName = 'place' | 'eliminate' | 'cannonFire' | 'cannonExplosion'
   | 'storm-spawn'
   | 'loong-roar' | 'dragon-breath' | 'iron-cavalry' | 'mammoth-crush' | 'iron-tank' | 'engineer-bomb';
 
-const SOUND_DEFS: [SoundName, string, number, boolean][] = [
+const CORE_SOUND_DEFS: [SoundName, string, number, boolean][] = [
   ['place', `${import.meta.env.BASE_URL}audio/place.mp3`, 0.6, false],
   ['eliminate', `${import.meta.env.BASE_URL}audio/eliminate.mp3`, 0.6, false],
   ['cannonFire', `${import.meta.env.BASE_URL}audio/cannonFire.mp3`, 0.7, false],
@@ -20,13 +20,17 @@ const SOUND_DEFS: [SoundName, string, number, boolean][] = [
   ['hit-whoosh', `${import.meta.env.BASE_URL}audio/hit-whoosh.mp3`, 0.5, false],
   ['hit-gong', `${import.meta.env.BASE_URL}audio/hit-gong-0.mp3`, 0.6, false],
   ['storm-spawn', `${import.meta.env.BASE_URL}audio/storm-explode.mp3`, 0.8, false],
-  ['loong-roar', `${import.meta.env.BASE_URL}audio/loong-roar.wav`, 0.7, false],
-  ['dragon-breath', `${import.meta.env.BASE_URL}audio/dragon-breath.wav`, 0.65, false],
-  ['iron-cavalry', `${import.meta.env.BASE_URL}audio/iron-cavalry.wav`, 0.65, false],
-  ['mammoth-crush', `${import.meta.env.BASE_URL}audio/mammoth-crush.wav`, 0.75, false],
-  ['iron-tank', `${import.meta.env.BASE_URL}audio/iron-tank.wav`, 0.7, false],
-  ['engineer-bomb', `${import.meta.env.BASE_URL}audio/engineer-bomb.wav`, 0.7, false],
 ];
+
+// 体积较大的英雄专属 .wav 音效改为首次触发时按需加载，不卡首屏加载进度条
+const LAZY_SOUND_DEFS: Partial<Record<SoundName, string>> = {
+  'loong-roar': `${import.meta.env.BASE_URL}audio/loong-roar.wav`,
+  'dragon-breath': `${import.meta.env.BASE_URL}audio/dragon-breath.wav`,
+  'iron-cavalry': `${import.meta.env.BASE_URL}audio/iron-cavalry.wav`,
+  'mammoth-crush': `${import.meta.env.BASE_URL}audio/mammoth-crush.wav`,
+  'iron-tank': `${import.meta.env.BASE_URL}audio/iron-tank.wav`,
+  'engineer-bomb': `${import.meta.env.BASE_URL}audio/engineer-bomb.wav`,
+};
 
 export const PIECE_HIT_SOUNDS: Record<PieceType, SoundName> = {
   [PieceType.PAWN]: 'hit-light',
@@ -103,7 +107,7 @@ export class AudioManager {
   private async _init(): Promise<void> {
     try {
       // bgm 采用 html5 流式播放，减少首屏 Web Audio 整体解码阻塞；SFX 采用 Web Audio 保证低延迟
-      await Promise.all(SOUND_DEFS.map(([name, file, defaultVol, loop]) => new Promise<void>((resolve, reject) => {
+      await Promise.all(CORE_SOUND_DEFS.map(([name, file, defaultVol, loop]) => new Promise<void>((resolve, reject) => {
         const isBgm = name === 'bgm';
         const prefVol = isBgm ? this.bgmVolume : this.sfxVolume;
         const vol = this.prefsLoaded ? prefVol : defaultVol;
@@ -144,7 +148,16 @@ export class AudioManager {
       return;
     }
     if (this.sfxVolume <= 0) return;
-    const sound = this.sounds.get(name);
+    let sound = this.sounds.get(name);
+    if (!sound && name !== 'bgm' && LAZY_SOUND_DEFS[name]) {
+      sound = new Howl({
+        src: [LAZY_SOUND_DEFS[name]!],
+        volume: this.prefsLoaded ? this.sfxVolume : 0.7,
+        preload: true,
+        onloaderror: () => { /* 懒加载英雄音效失败静默降级 */ },
+      });
+      this.sounds.set(name, sound);
+    }
     if (sound && name !== 'bgm') {
       const id = sound.play();
       // 音高微调（连击递增）：rate != 1 时按播放实例设置，避免影响后续播放

@@ -24,8 +24,13 @@ export class DomUIState {
 
 export interface DomUIHost {
   readonly onHandSelect: ((index: number) => void) | null;
+  readonly onHandDragStart: ((index: number, clientX: number, clientY: number, pointerType: string) => void) | null;
   readonly onPreviewClick: ((index: number) => void) | null;
   readonly onConfirm: (() => void) | null;
+  readonly onUndoPlacement: (() => void) | null;
+  readonly onSkipTurn: (() => void) | null;
+  readonly onDailyChallenge: (() => void) | null;
+  readonly onCopyChallengeLink: (() => void) | null;
   readonly onRestart: (() => void) | null;
   readonly onMenu: (() => void) | null;
   readonly onCloudSync: (() => void) | null;

@@ -8,6 +8,7 @@ import { AudioManager } from '../../audio/AudioManager';
 import { showConfirmDialog } from '../utils/domHelpers';
 import { getResolution, setResolution, RES_OPTIONS } from '../../utils/renderLoop';
 import { getBattleSpeed, setBattleSpeed, type BattleSpeed } from '../../utils/battleSpeed';
+import { getPieceIconMode, setPieceIconMode, type PieceIconMode } from '../utils/pieceIcons';
 import type { DomUIContext } from '../DomUIContext';
 
 const VOL_TABS = [t('settings.volOff'), t('settings.volLow'), t('settings.volMid'), t('settings.volHigh')];
@@ -39,6 +40,7 @@ export class SettingsController {
     const curRes = getResolution();
     const resIdx = RES_OPTIONS.indexOf(curRes);
     const curSpeed = getBattleSpeed();
+    const curStyle = getPieceIconMode();
     // 回放模式下隐藏"重新开始"和"排行榜"按钮
     const isReplay = !!document.getElementById('replay-controls');
 
@@ -75,6 +77,13 @@ export class SettingsController {
             <div class="vol-tabs" id="lang-tabs">
               <button class="vol-tab${getLang() === 'en' ? ' active' : ''}" data-lang="en">${t('settings.langEn')}</button>
               <button class="vol-tab${getLang() === 'zh' ? ' active' : ''}" data-lang="zh">${t('settings.langZh')}</button>
+            </div>
+          </div>
+          <div class="vol-row">
+            <span class="vol-label">♟ ${t('settings.pieceStyle')}</span>
+            <div class="vol-tabs" id="piece-style-tabs">
+              <button class="vol-tab${curStyle === 'zh' ? ' active' : ''}" data-piece-style="zh">${t('settings.styleZh')}</button>
+              <button class="vol-tab${curStyle === 'intl' ? ' active' : ''}" data-piece-style="intl">${t('settings.styleIntl')}</button>
             </div>
           </div>
         </div>
@@ -176,6 +185,16 @@ export class SettingsController {
       closeModal();
       setLang(lang);
       window.location.reload();
+    });
+
+    overlay.querySelector('#piece-style-tabs')?.addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest('[data-piece-style]') as HTMLElement;
+      if (!btn) return;
+      const style = btn.dataset.pieceStyle as PieceIconMode;
+      setPieceIconMode(style);
+      overlay.querySelectorAll('#piece-style-tabs .vol-tab').forEach((el) => {
+        el.classList.toggle('active', (el as HTMLElement).dataset.pieceStyle === style);
+      });
     });
 
     overlay.querySelector('#quality-tabs')!.addEventListener('click', (e) => {

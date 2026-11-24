@@ -7,8 +7,9 @@ import { t } from '../../i18n';
 import { getReplay, shareReplay } from '../../cloud/api';
 import { SaveManager } from '../../core/SaveManager';
 import { engineBridge } from '../../wasm/EngineBridge';
-import { showToast } from '../utils/domHelpers';
+import { showToast, copyToClipboard } from '../utils/domHelpers';
 import { showBattleShareCard } from '../../utils/shareCard';
+import { getFormationName } from '../../config/levelMeta';
 
 // ── XQBR record parser ──
 // Header layout (offset/size): magic(4) version(2) headerSize(2) mode(1) result(1)
@@ -33,29 +34,6 @@ export interface XqbrRecord {
   rngSeed: number;
   configJson: string;
   actions: XqbrAction[];
-}
-
-/** Copy text to clipboard with fallback for non-secure contexts (HTTP). */
-async function copyToClipboard(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch { /* fall through to legacy API */ }
-  try {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.setAttribute('readonly', '');
-    ta.style.position = 'fixed';
-    ta.style.left = '-9999px';
-    ta.style.top = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand('copy');
-    document.body.removeChild(ta);
-    return ok;
-  } catch { return false; }
 }
 
 /** Parse a base64-encoded XQBR record blob. Returns null on malformed data. */
@@ -163,7 +141,7 @@ export class ReplayController {
     // 保存数据，用于 reshow() 重新显示分享面板
     this.lastRenderData = { data, onChallenge, onWatchReplay };
     const shareUrl = `${window.location.origin}${import.meta.env.BASE_URL}?replay=${data.code}`;
-    const starsHtml = '★'.repeat(data.stars) + '☆'.repeat(Math.max(0, 5 - data.stars));
+    const starsHtml = '★'.repeat(data.stars) + '☆'.repeat(Math.max(0, 3 - data.stars));
     const record = parseXqbrRecord(data.record);
     const canWatch = !!onWatchReplay && !!record;
 
@@ -193,6 +171,7 @@ export class ReplayController {
         nickname: data.nickname,
         replayCode: data.code,
         shareUrl,
+        formationName: getFormationName(data.level) || undefined,
       });
     });
     overlay.querySelector('#replay-copy')!.addEventListener('click', async () => {

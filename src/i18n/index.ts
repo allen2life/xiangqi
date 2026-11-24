@@ -18,7 +18,12 @@ function detectLang(): Lang {
     if (stored === 'zh' || stored === 'en') return stored;
   }
 
-  // 3) Default to English
+  // 3) Auto-detect from browser language preference
+  if (typeof navigator !== 'undefined' && navigator.language) {
+    return navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en';
+  }
+
+  // 4) Default to English
   return 'en';
 }
 

@@ -1,0 +1,23 @@
+{
+  "name": "龙魂象棋 · XiangqiBlast",
+  "short_name": "龙魂象棋",
+  "description": "中国象棋为内核的快节奏破阵消除休闲小游戏",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#090c12",
+  "theme_color": "#090c12",
+  "icons": [
+    {
+      "src": "logos/logo_xiangqi_128.jpg",
+      "sizes": "128x128",
+      "type": "image/jpeg"
+    },
+    {
+      "src": "logos/logo.jpg",
+      "sizes": "256x256",
+      "type": "image/jpeg"
+    }
+  ]
+}
