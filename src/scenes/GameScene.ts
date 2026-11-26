@@ -417,6 +417,7 @@ export class GameScene {
           );
         },
         (record) => { this.beginReplay(record); },
+        data.callout,
       );
     };
 

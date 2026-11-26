@@ -132,6 +132,20 @@ function mountGame(app: Application): void {
     app.stage.addChildAt(bgSprite, 0);
     renderNow();
   });
+
+  registerServiceWorker();
+}
+
+function registerServiceWorker(): void {
+  if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return;
+  const doRegister = () => {
+    void navigator.serviceWorker.register('./sw.js').catch(() => { /* ignore */ });
+  };
+  if (document.readyState === 'complete') {
+    doRegister();
+  } else {
+    window.addEventListener('load', doRegister, { once: true });
+  }
 }
 
 function createBackground(w: number, h: number): Sprite {

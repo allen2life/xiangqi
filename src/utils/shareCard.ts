@@ -155,19 +155,51 @@ async function renderBattleCardCanvas(options: BattleCardOptions): Promise<strin
   ctx.strokeStyle = 'rgba(184, 58, 42, 0.85)';
   ctx.lineWidth = 4;
   ctx.strokeRect(-45, -45, 90, 90);
-  ctx.font = 'bold 28px "STKaiti", "KaiTi", serif';
   ctx.fillStyle = 'rgba(184, 58, 42, 0.9)';
-  const stampChars = [...(options.callout || '').replace(/[·!！\s&]/g, '')].slice(0, 4);
-  if (stampChars.length === 4) {
-    ctx.fillText(stampChars[0], -20, -16);
-    ctx.fillText(stampChars[1], 20, -16);
-    ctx.fillText(stampChars[2], -20, 20);
-    ctx.fillText(stampChars[3], 20, 20);
+  const rawCallout = (options.callout || '').trim();
+  const drawQuadSeal = (chars: string[]) => {
+    ctx.font = 'bold 28px "STKaiti", "KaiTi", serif';
+    ctx.fillText(chars[0], -20, -16);
+    ctx.fillText(chars[1], 20, -16);
+    ctx.fillText(chars[2], -20, 20);
+    ctx.fillText(chars[3], 20, 20);
+  };
+  if (/[\u4e00-\u9fff]/.test(rawCallout)) {
+    const allChars = [...rawCallout.replace(/[·!！\s&]/g, '')];
+    const headChars = [...rawCallout.split('·')[0].replace(/[!！\s&]/g, '')];
+    if (allChars.length === 4) {
+      drawQuadSeal(allChars);
+    } else if (headChars.length === 4) {
+      drawQuadSeal(headChars);
+    } else if (headChars.length === 3) {
+      ctx.font = 'bold 26px "STKaiti", "KaiTi", serif';
+      ctx.fillText(headChars[0], -18, -16);
+      ctx.fillText(headChars[1], 18, -16);
+      ctx.fillText(headChars[2], 0, 18);
+    } else if (headChars.length === 2) {
+      ctx.font = 'bold 30px "STKaiti", "KaiTi", serif';
+      ctx.fillText(headChars[0], 0, -17);
+      ctx.fillText(headChars[1], 0, 19);
+    } else {
+      drawQuadSeal(['大', '捷', '无', '双']);
+    }
+  } else if (rawCallout) {
+    const cleaned = rawCallout.replace(/!/g, '').replace(/\s*&\s*/g, ' & ').toUpperCase();
+    const parts = cleaned.includes(' & ')
+      ? cleaned.split(' & ').map((s) => s.trim()).filter(Boolean)
+      : cleaned.split(/\s+/).filter(Boolean);
+    ctx.font = 'bold 15px sans-serif';
+    if (parts.length >= 2) {
+      ctx.fillText(parts[0], 0, -10, 80);
+      ctx.fillText(parts.slice(1).join(' '), 0, 12, 80);
+    } else {
+      ctx.fillText(cleaned, 0, 0, 80);
+    }
+  } else if (isEn) {
+    ctx.font = 'bold 18px sans-serif';
+    ctx.fillText('VICTORY', 0, 0, 80);
   } else {
-    ctx.fillText('大', -20, -16);
-    ctx.fillText('捷', 20, -16);
-    ctx.fillText('无', -20, 20);
-    ctx.fillText('双', 20, 20);
+    drawQuadSeal(['大', '捷', '无', '双']);
   }
   ctx.restore();
 
@@ -203,9 +235,12 @@ async function renderBattleCardCanvas(options: BattleCardOptions): Promise<strin
     ctx.fillText(`挑战口令: ${options.replayCode}`, width / 2, 1100);
   }
 
+  const hostLabel = (typeof window !== 'undefined' && window.location.host)
+    ? window.location.host
+    : 'xiangqi.loongclan.xyz';
   ctx.font = '16px sans-serif';
   ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
-  ctx.fillText('suanxin.xyz/xiangqiblast', width / 2, 1135);
+  ctx.fillText(hostLabel, width / 2, 1135);
 
   ctx.restore();
 

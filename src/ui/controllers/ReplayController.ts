@@ -93,6 +93,7 @@ export class ReplayController {
     data: { code: string; level: number; score: number; stars: number; nickname: string; record: string };
     onChallenge?: (level: number, targetScore: number, record: XqbrRecord | null) => void;
     onWatchReplay?: (record: XqbrRecord) => void;
+    callout?: string;
   } | null = null;
 
   /** Share current game record to backend, return full share data (no extra fetch needed). */
@@ -137,9 +138,10 @@ export class ReplayController {
     data: { code: string; level: number; score: number; stars: number; nickname: string; record: string },
     onChallenge?: (level: number, targetScore: number, record: XqbrRecord | null) => void,
     onWatchReplay?: (record: XqbrRecord) => void,
+    callout?: string,
   ): void {
     // 保存数据，用于 reshow() 重新显示分享面板
-    this.lastRenderData = { data, onChallenge, onWatchReplay };
+    this.lastRenderData = { data, onChallenge, onWatchReplay, callout };
     const shareUrl = `${window.location.origin}${import.meta.env.BASE_URL}?replay=${data.code}`;
     const starsHtml = '★'.repeat(data.stars) + '☆'.repeat(Math.max(0, 3 - data.stars));
     const record = parseXqbrRecord(data.record);
@@ -172,6 +174,7 @@ export class ReplayController {
         replayCode: data.code,
         shareUrl,
         formationName: getFormationName(data.level) || undefined,
+        callout,
       });
     });
     overlay.querySelector('#replay-copy')!.addEventListener('click', async () => {
@@ -208,6 +211,7 @@ export class ReplayController {
     stars: number,
     onChallenge?: (level: number, targetScore: number, record: XqbrRecord | null) => void,
     onWatchReplay?: (record: XqbrRecord) => void,
+    callout?: string,
   ): Promise<void> {
     // 先显示 loading 面板，给用户即时反馈
     const overlay = this.showLoading();
@@ -218,7 +222,7 @@ export class ReplayController {
       return;
     }
     // 直接用本地数据渲染面板（不再请求 getReplay）
-    this.renderPanel(overlay, result, onChallenge, onWatchReplay);
+    this.renderPanel(overlay, result, onChallenge, onWatchReplay, callout);
   }
 
   /** Show replay viewer overlay by fetching replay code from backend.
@@ -261,8 +265,8 @@ export class ReplayController {
     // renderPanel 需要 overlay 内已有 .replay-card 子元素
     overlay.innerHTML = '<div class="replay-card"></div>';
     document.body.appendChild(overlay);
-    const { data, onChallenge, onWatchReplay } = this.lastRenderData;
-    this.renderPanel(overlay, data, onChallenge, onWatchReplay);
+    const { data, onChallenge, onWatchReplay, callout } = this.lastRenderData;
+    this.renderPanel(overlay, data, onChallenge, onWatchReplay, callout);
     // 覆盖 bindClose 的关闭行为：关闭面板后执行 onClose 回调
     const closeBtn = overlay.querySelector('#replay-close');
     if (closeBtn) {
